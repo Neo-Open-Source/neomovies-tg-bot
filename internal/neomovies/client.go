@@ -18,6 +18,50 @@ type Client struct {
 	hc      *http.Client
 }
 
+func (c *Client) GetPopular(ctx context.Context, page int) (*SearchResponse, error) {
+	if page <= 0 {
+		page = 1
+	}
+	u, _ := url.Parse(c.apiBase + "/api/v1/movies/popular")
+	q := u.Query()
+	q.Set("page", strconv.Itoa(page))
+	q.Set("lang", "ru")
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("neomovies popular status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		Success bool           `json:"success"`
+		Data    SearchResponse `json:"data"`
+	}
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&wrapper); err == nil && (wrapper.Data.Results != nil || wrapper.Data.TotalPages != 0) {
+		return &wrapper.Data, nil
+	}
+
+	_ = resp.Body.Close()
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp2, err := c.hc.Do(req2)
+	if err != nil {
+		return nil, err
+	}
+	defer resp2.Body.Close()
+	var direct SearchResponse
+	if err := json.NewDecoder(resp2.Body).Decode(&direct); err != nil {
+		return nil, err
+	}
+	return &direct, nil
+}
+
 func NewClient(apiBase string) *Client {
 	return &Client{
 		apiBase: strings.TrimRight(apiBase, "/"),
@@ -46,10 +90,7 @@ type Movie struct {
 	PosterURLPreview string `json:"posterUrlPreview"`
 	ReleaseDate      string `json:"release_date"`
 	Year             string `json:"year"`
-	Genres           []struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	} `json:"genres"`
+	Genres           []MovieGenre `json:"genres"`
 	VoteAverage     float64 `json:"vote_average"`
 	Rating          float64 `json:"rating"`
 	RatingKinopoisk float64 `json:"ratingKinopoisk"`
@@ -58,6 +99,11 @@ type Movie struct {
 		KP   int    `json:"kp"`
 		IMDB string `json:"imdb"`
 	} `json:"externalIds"`
+}
+
+type MovieGenre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 func (c *Client) SearchMovies(ctx context.Context, query string, page int) (*SearchResponse, error) {
@@ -247,10 +293,18 @@ func (c *Client) ImageURL(path string, kpType string, kpID int) string {
 
 func (c *Client) PlayerRedirectURL(provider string, idType string, id int) string {
 	base := strings.TrimRight(osGetenv("PUBLIC_BASE_URL"), "/")
-	if base == "" {
+	if base == "" || isLocalhostURL(base) || !strings.HasPrefix(base, "https://") {
 		return fmt.Sprintf("%s/api/v1/players/%s/%s/%d", c.apiBase, provider, idType, id)
 	}
 	return fmt.Sprintf("%s/api/player?provider=%s&idType=%s&id=%d", base, url.QueryEscape(provider), url.QueryEscape(idType), id)
+}
+
+func isLocalhostURL(base string) bool {
+	b := strings.ToLower(strings.TrimSpace(base))
+	return strings.HasPrefix(b, "http://localhost") ||
+		strings.HasPrefix(b, "http://127.0.0.1") ||
+		strings.HasPrefix(b, "https://localhost") ||
+		strings.HasPrefix(b, "https://127.0.0.1")
 }
 
 func osGetenv(key string) string {

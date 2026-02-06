@@ -5,11 +5,11 @@
     }
   },
   "routes": [
-    { "src": "/$", "dest": "/index.html" },
-    { "src": "/item$", "dest": "/item.html" },
-    { "src": "/api/library$", "dest": "/api/webhook.go" },
-    { "src": "/api/library/item$", "dest": "/api/webhook.go" },
-    { "src": "/api/webhook", "dest": "/api/webhook.go" },
-    { "src": "/api/player", "dest": "/api/webhook.go" }
-  ]
+    { "src": "/api/(.*)", "dest": "/api/webhook.go" },
+    { "src": "/(.*)", "dest": "/frontend/dist/$1" }
+  ],
+  "installCommand": "cd frontend && npm install",
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/dist",
+  "framework": "vite"
 }

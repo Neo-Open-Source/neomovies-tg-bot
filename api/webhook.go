@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"neomovies-tg-bot/internal/neomovies"
@@ -19,6 +22,7 @@ import (
 type update struct {
 	UpdateID      int             `json:"update_id"`
 	InlineQuery   *inlineQuery    `json:"inline_query"`
+	ChosenInline  *chosenInline   `json:"chosen_inline_result"`
 	CallbackQuery *callbackQuery  `json:"callback_query"`
 	Message       *message        `json:"message"`
 	MyChatMember  json.RawMessage `json:"my_chat_member"`
@@ -34,11 +38,19 @@ type inlineQuery struct {
 	Query string `json:"query"`
 }
 
+type chosenInline struct {
+	ResultID        string `json:"result_id"`
+	From            user   `json:"from"`
+	Query           string `json:"query"`
+	InlineMessageID string `json:"inline_message_id"`
+}
+
 type callbackQuery struct {
 	ID      string   `json:"id"`
 	From    user     `json:"from"`
 	Data    string   `json:"data"`
 	Message *message `json:"message"`
+	InlineMessageID string `json:"inline_message_id"`
 }
 
 type chat struct {
@@ -105,11 +117,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case upd.InlineQuery != nil:
 		handleInlineQuery(ctx, w, bot, movies, db, upd.InlineQuery)
 		return
+	case upd.ChosenInline != nil:
+		handleChosenInline(ctx, w, bot, movies, db, upd.ChosenInline)
+		return
 	case upd.CallbackQuery != nil:
 		handleCallback(ctx, w, bot, movies, db, upd.CallbackQuery)
 		return
 	case upd.Message != nil:
-		handleMessage(ctx, w, bot, db, upd.Message)
+		handleMessage(ctx, w, bot, movies, db, upd.Message)
 		return
 	default:
 		w.WriteHeader(http.StatusOK)
@@ -265,19 +280,86 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func handleInlineQuery(ctx context.Context, w http.ResponseWriter, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, q *inlineQuery) {
 	query := strings.TrimSpace(q.Query)
+	switch strings.ToLower(query) {
+	case "#movies", "movies":
+		query = "#movies"
+	case "#tv", "tv", "series":
+		query = "#tv"
+	}
 	if query == "" {
-		_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: []tg.InlineQueryResult{}, CacheTime: 1, IsPersonal: true})
+		res, err := movies.GetPopular(ctx, 1)
+		if err != nil {
+			log.Printf("inline popular error: %v", err)
+			_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: []tg.InlineQueryResult{}, CacheTime: 1, IsPersonal: true})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		results := buildInlineResults(ctx, movies, db, res)
+		if err := bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: results, CacheTime: 5, IsPersonal: true}); err != nil {
+			log.Printf("inline popular answer error: %v (results=%d)", err, len(results))
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	res, err := movies.SearchMovies(ctx, query, 1)
 	if err != nil {
+		log.Printf("inline search error: %v (query=%q)", err, query)
 		_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: []tg.InlineQueryResult{}, CacheTime: 1, IsPersonal: true})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
+	results := buildInlineResults(ctx, movies, db, res)
+	if err := bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: results, CacheTime: 5, IsPersonal: true}); err != nil {
+		log.Printf("inline search answer error: %v (query=%q results=%d)", err, query, len(results))
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleChosenInline(ctx context.Context, w http.ResponseWriter, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, chosen *chosenInline) {
+	kpID, err := strconv.Atoi(strings.TrimSpace(chosen.ResultID))
+	if err != nil || kpID <= 0 {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	payload, err := buildMoviePayload(ctx, movies, db, kpID)
+	if err != nil {
+		log.Printf("chosen inline payload error: %v (kp_id=%d)", err, kpID)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if chosen.InlineMessageID != "" {
+		if err := bot.EditMessageMedia(ctx, tg.EditMessageMediaRequest{
+			InlineMessageID: chosen.InlineMessageID,
+			Media: tg.InputMediaPhoto{
+				Type:      "photo",
+				Media:     payload.PhotoURL,
+				Caption:   payload.Caption,
+				ParseMode: "HTML",
+			},
+			ReplyMarkup: &payload.Keyboard,
+		}); err != nil {
+			log.Printf("chosen inline editMessageMedia error: %v (kp_id=%d)", err, kpID)
+		}
+	} else {
+		if err := bot.SendPhoto(ctx, tg.SendPhotoRequest{
+			ChatID:      chosen.From.ID,
+			Photo:       payload.PhotoURL,
+			Caption:     payload.Caption,
+			ParseMode:   "HTML",
+			ReplyMarkup: &payload.Keyboard,
+		}); err != nil {
+			log.Printf("chosen inline sendPhoto error: %v (kp_id=%d)", err, kpID)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func buildInlineResults(ctx context.Context, movies *neomovies.Client, db *storage.Mongo, res *neomovies.SearchResponse) []tg.InlineQueryResult {
 	results := make([]tg.InlineQueryResult, 0, 10)
 	for i, m := range res.Results {
 		if i >= 10 {
@@ -291,6 +373,22 @@ func handleInlineQuery(ctx context.Context, w http.ResponseWriter, bot *tg.Clien
 		if kpID == 0 {
 			continue
 		}
+
+		inlineCache.Set(kpID, inlineMovieData{
+			KPID:             kpID,
+			Title:            firstNonEmpty(m.Title, m.NameRu, m.Name, m.NameOriginal),
+			Year:             m.Year,
+			Overview:         m.Overview,
+			Description:      m.Description,
+			ShortDescription: m.ShortDescription,
+			PosterPath:       m.PosterPath,
+			PosterURL:        m.PosterURL,
+			PosterURLPreview: m.PosterURLPreview,
+			Rating:           m.Rating,
+			RatingKinopoisk:  m.RatingKinopoisk,
+			VoteAverage:      m.VoteAverage,
+			Genres:           m.Genres,
+		}, 30*time.Minute)
 
 		title := firstNonEmpty(m.Title, m.NameRu, m.Name, m.NameOriginal)
 		year := ""
@@ -318,42 +416,68 @@ func handleInlineQuery(ctx context.Context, w http.ResponseWriter, bot *tg.Clien
 		}
 
 		poster := firstNonEmpty(m.PosterPath, m.PosterURLPreview, m.PosterURL)
-		photoURL := movies.ImageURL(poster, "kp_big", kpID)
 		thumbURL := movies.ImageURL(poster, "kp_small", kpID)
 
-		watch, _ := db.GetWatchItemByKPID(ctx, kpID)
-		keyboard := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
-			{
-				{Text: "Плеер 1 (Collaps)", URL: movies.PlayerRedirectURL("collaps", "kp", kpID)},
-				{Text: "Плеер 2 (Lumex)", URL: movies.PlayerRedirectURL("lumex", "kp", kpID)},
-			},
-		})
-		if watch != nil {
-			keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []tg.InlineKeyboardButton{{Text: "Смотреть в Telegram", CallbackData: fmt.Sprintf("watch:%d", kpID)}})
-		}
-		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
-
-		caption := displayTitle
+		caption := html.EscapeString(displayTitle)
 		if rating > 0 {
 			caption = fmt.Sprintf("%s\nКинопоиск: %.1f", caption, rating)
 		}
 		if desc != "" {
-			caption = caption + "\n\n" + desc
+			caption = caption + "\n\n" + html.EscapeString(desc)
 		}
+		caption = truncateRunes(caption, 950)
 
-		results = append(results, tg.InlineQueryResultPhoto{
-			Type:        "photo",
-			ID:          strconv.FormatInt(int64(kpID), 10),
-			PhotoURL:    photoURL,
-			ThumbURL:    thumbURL,
-			Caption:     caption,
-			ParseMode:   "HTML",
-			ReplyMarkup: &keyboard,
-		})
+		descLines := make([]string, 0, 2)
+		if rating > 0 {
+			descLines = append(descLines, fmt.Sprintf("Кинопоиск: %.1f", rating))
+		}
+		if len(m.Genres) > 0 {
+			genres := make([]string, 0, 3)
+			for _, g := range m.Genres {
+				name := strings.TrimSpace(g.Name)
+				if name != "" {
+					genres = append(genres, name)
+				}
+				if len(genres) >= 3 {
+					break
+				}
+			}
+			if len(genres) > 0 {
+				descLines = append(descLines, strings.Join(genres, ", "))
+			}
+		}
+		description := truncateRunes(strings.Join(descLines, " • "), 180)
+
+		messageText := fmt.Sprintf("/get %d", kpID)
+
+		result := tg.InlineQueryResultArticle{
+			Type:  "article",
+			ID:    strconv.FormatInt(int64(kpID), 10),
+			Title: displayTitle,
+			InputMessageContent: tg.InputTextMessageContent{
+				MessageText: messageText,
+				ParseMode:   "HTML",
+			},
+			Description: description,
+		}
+		if thumbURL != "" {
+			result.ThumbURL = thumbURL
+			result.ThumbWidth = 80
+			result.ThumbHeight = 120
+		}
+		results = append(results, result)
 	}
+	return results
+}
 
-	_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: results, CacheTime: 5, IsPersonal: true})
-	w.WriteHeader(http.StatusOK)
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max-1]) + "…"
 }
 
 func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, cq *callbackQuery) {
@@ -361,6 +485,32 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	if data == "close" {
 		if cq.Message != nil {
 			_ = bot.DeleteMessage(ctx, cq.Message.Chat.ID, cq.Message.MessageID)
+		} else if cq.InlineMessageID != "" {
+			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{InlineMessageID: cq.InlineMessageID, ReplyMarkup: &tg.InlineKeyboardMarkup{InlineKeyboard: [][]tg.InlineKeyboardButton{}}})
+		}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if data == "menu:new" || data == "menu:movies" || data == "menu:series" {
+		if cq.Message != nil {
+			query := ""
+			text := "Открой поиск и набери название — я покажу карточки.\n\nПодсказка: можно нажать кнопку “Поиск” в меню."
+			if data == "menu:movies" {
+				query = "#movies"
+				text = "Топ фильмов. Нажми кнопку ниже."
+			} else if data == "menu:series" {
+				query = "#tv"
+				text = "Топ сериалов. Нажми кнопку ниже."
+			}
+			var kb *tg.InlineKeyboardMarkup
+			if query != "" {
+				markup := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
+					{{Text: "Показать", SwitchInlineQueryCurrentChat: tg.StrPtr(query)}},
+				})
+				kb = &markup
+			}
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: cq.Message.Chat.ID, Text: text, ReplyMarkup: kb})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
@@ -486,25 +636,67 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	w.WriteHeader(http.StatusOK)
 }
 
-func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, db *storage.Mongo, msg *message) {
-	adminChatIDStr := strings.TrimSpace(os.Getenv("ADMIN_CHAT_ID"))
-	if adminChatIDStr == "" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	adminChatID, err := strconv.ParseInt(adminChatIDStr, 10, 64)
-	if err != nil || adminChatID == 0 {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if msg.Chat.ID != adminChatID {
+func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, msg *message) {
+	log.Printf("message received chat_id=%d text=%q", msg.Chat.ID, strings.TrimSpace(msg.Text))
+	if strings.HasPrefix(strings.TrimSpace(msg.Text), "/start") {
+		log.Printf("/start from chat_id=%d", msg.Chat.ID)
+		kb := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
+			{{Text: "Фильмы", CallbackData: "menu:movies"}, {Text: "Сериалы", CallbackData: "menu:series"}},
+			{{Text: "Поиск", SwitchInlineQueryCurrentChat: tg.StrPtr("")}},
+			{{Text: "Закрыть", CallbackData: "close"}},
+		})
+		if err := bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Это библиотека кино и сериалов с быстрым поиском.\n\nНажми “Поиск” и введи название — я покажу карточки.\n\nЕсли просто написать @neomovies_tg_bot без текста — покажу популярное.", ReplyMarkup: &kb}); err != nil {
+			log.Printf("/start sendMessage error: %v", err)
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	text := strings.TrimSpace(msg.Text)
+	if strings.HasPrefix(text, "/get ") {
+		parts := strings.Fields(text)
+		if len(parts) < 2 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		if kpID <= 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if err := sendMovieCard(ctx, bot, movies, db, msg.Chat.ID, kpID); err != nil {
+			log.Printf("public /get error: %v (kp_id=%d)", err, kpID)
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	adminChatIDStr := strings.TrimSpace(os.Getenv("ADMIN_CHAT_ID"))
+	if adminChatIDStr == "" {
+		if text == "/help" || text == "help" {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("ADMIN_CHAT_ID не задан. Твой chat_id=%d", msg.Chat.ID)})
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	adminChatID, err := strconv.ParseInt(adminChatIDStr, 10, 64)
+	if err != nil || adminChatID == 0 {
+		if text == "/help" || text == "help" {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("ADMIN_CHAT_ID неверный. Твой chat_id=%d", msg.Chat.ID)})
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if msg.Chat.ID != adminChatID {
+		if text == "/help" || text == "help" {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("Нет доступа. Твой chat_id=%d", msg.Chat.ID)})
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	if text == "/help" || text == "help" {
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/get <kp_id>\n/del <kp_id>\n/list [limit]"})
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -594,7 +786,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, d
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if strings.HasPrefix(text, "/get ") {
+	if strings.HasPrefix(text, "/getinfo ") {
 		parts := strings.Fields(text)
 		if len(parts) < 2 {
 			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /get <kp_id>"})
@@ -679,4 +871,303 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+type moviePayload struct {
+	PhotoURL string
+	Caption  string
+	Keyboard tg.InlineKeyboardMarkup
+}
+
+type inlineMovieData struct {
+	KPID             int
+	Title            string
+	Year             string
+	Overview         string
+	Description      string
+	ShortDescription string
+	PosterPath       string
+	PosterURL        string
+	PosterURLPreview string
+	Rating           float64
+	RatingKinopoisk  float64
+	VoteAverage      float64
+	Genres           []neomovies.MovieGenre
+}
+
+type inlineCacheEntry struct {
+	data    inlineMovieData
+	expires time.Time
+}
+
+type inlineMovieCache struct {
+	mu    sync.Mutex
+	items map[int]inlineCacheEntry
+}
+
+func newInlineMovieCache() *inlineMovieCache {
+	return &inlineMovieCache{items: map[int]inlineCacheEntry{}}
+}
+
+func (c *inlineMovieCache) Get(kpID int) (inlineMovieData, bool) {
+	if kpID <= 0 {
+		return inlineMovieData{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.items[kpID]
+	if !ok {
+		return inlineMovieData{}, false
+	}
+	if time.Now().After(entry.expires) {
+		delete(c.items, kpID)
+		return inlineMovieData{}, false
+	}
+	return entry.data, true
+}
+
+func (c *inlineMovieCache) Set(kpID int, data inlineMovieData, ttl time.Duration) {
+	if kpID <= 0 {
+		return
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	c.mu.Lock()
+	c.items[kpID] = inlineCacheEntry{data: data, expires: time.Now().Add(ttl)}
+	c.mu.Unlock()
+}
+
+var inlineCache = newInlineMovieCache()
+
+func buildMoviePayload(ctx context.Context, movies *neomovies.Client, db *storage.Mongo, kpID int) (*moviePayload, error) {
+	if kpID <= 0 {
+		return nil, fmt.Errorf("invalid kp_id")
+	}
+
+	log.Printf("movie payload: kp_id=%d", kpID)
+
+	apiBase := strings.TrimRight(os.Getenv("API_BASE"), "/")
+	if apiBase == "" {
+		apiBase = "https://api.neomovies.ru"
+	}
+
+	info, err := movies.GetMovieByKPID(ctx, kpID)
+	if err != nil || info == nil {
+		log.Printf("movie payload: GetMovieByKPID failed kp_id=%d err=%v", kpID, err)
+		return nil, fmt.Errorf("get movie failed: %v", err)
+	}
+	log.Printf("movie payload: GetMovieByKPID ok kp_id=%d title=%q nameRu=%q name=%q year=%q release=%q rating=%.2f kp=%.2f vote=%.2f poster=%q", kpID, info.Title, info.NameRu, info.Name, info.Year, info.ReleaseDate, info.Rating, info.RatingKinopoisk, info.VoteAverage, info.PosterPath)
+
+	title := strings.TrimSpace(firstNonEmpty(info.Title, info.NameRu, info.Name, info.NameOriginal))
+	if cached, ok := inlineCache.Get(kpID); ok {
+		if title == "" {
+			title = strings.TrimSpace(firstNonEmpty(cached.Title))
+		}
+		if info.Overview == "" && info.Description == "" && info.ShortDescription == "" {
+			info.Overview = cached.Overview
+			info.Description = cached.Description
+			info.ShortDescription = cached.ShortDescription
+		}
+		if len(info.Genres) == 0 && len(cached.Genres) > 0 {
+			info.Genres = cached.Genres
+		}
+		if info.Rating == 0 {
+			info.Rating = cached.Rating
+		}
+		if info.RatingKinopoisk == 0 {
+			info.RatingKinopoisk = cached.RatingKinopoisk
+		}
+		if info.VoteAverage == 0 {
+			info.VoteAverage = cached.VoteAverage
+		}
+		if info.Year == "" {
+			info.Year = cached.Year
+		}
+		if info.ReleaseDate == "" {
+			info.ReleaseDate = cached.Year
+		}
+		if info.PosterPath == "" && cached.PosterPath != "" {
+			info.PosterPath = cached.PosterPath
+		}
+		if info.PosterURL == "" && cached.PosterURL != "" {
+			info.PosterURL = cached.PosterURL
+		}
+		if info.PosterURLPreview == "" && cached.PosterURLPreview != "" {
+			info.PosterURLPreview = cached.PosterURLPreview
+		}
+	}
+	if title == "" && db != nil {
+		if item, _ := db.GetWatchItemByKPID(ctx, kpID); item != nil {
+			title = strings.TrimSpace(item.Title)
+		}
+	}
+	if title == "" || (info.Overview == "" && info.Description == "" && info.ShortDescription == "") {
+		log.Printf("movie payload: fallback search kp_id=%d", kpID)
+		if sr, _ := movies.SearchMovies(ctx, strconv.Itoa(kpID), 1); sr != nil {
+			log.Printf("movie payload: search results kp_id=%d count=%d", kpID, len(sr.Results))
+			for _, m := range sr.Results {
+				matchID := m.ExternalIDs.KP
+				if matchID == 0 {
+					matchID = m.KinopoiskID
+				}
+				if matchID != kpID {
+					continue
+				}
+				log.Printf("movie payload: search matched kp_id=%d title=%q nameRu=%q year=%q rating=%.2f kp=%.2f vote=%.2f", kpID, m.Title, m.NameRu, m.Year, m.Rating, m.RatingKinopoisk, m.VoteAverage)
+				if title == "" {
+					title = strings.TrimSpace(firstNonEmpty(m.Title, m.NameRu, m.Name, m.NameOriginal))
+				}
+				if info.Overview == "" && info.Description == "" && info.ShortDescription == "" {
+					info.Overview = m.Overview
+					info.Description = m.Description
+					info.ShortDescription = m.ShortDescription
+				}
+				if len(info.Genres) == 0 && len(m.Genres) > 0 {
+					info.Genres = m.Genres
+				}
+				if info.Rating == 0 && m.Rating > 0 {
+					info.Rating = m.Rating
+				}
+				if info.RatingKinopoisk == 0 && m.RatingKinopoisk > 0 {
+					info.RatingKinopoisk = m.RatingKinopoisk
+				}
+				if info.VoteAverage == 0 && m.VoteAverage > 0 {
+					info.VoteAverage = m.VoteAverage
+				}
+				if info.Year == "" && m.Year != "" {
+					info.Year = m.Year
+				}
+				if info.ReleaseDate == "" && m.ReleaseDate != "" {
+					info.ReleaseDate = m.ReleaseDate
+				}
+				break
+			}
+		}
+	}
+
+	if title == "" {
+		title = fmt.Sprintf("kp_%d", kpID)
+	}
+	year := ""
+	if info.Year != "" {
+		year = info.Year
+	} else if info.ReleaseDate != "" && len(info.ReleaseDate) >= 4 {
+		year = info.ReleaseDate[0:4]
+	}
+	displayTitle := title
+	if year != "" {
+		displayTitle = fmt.Sprintf("%s (%s)", title, year)
+	}
+
+	rating := info.Rating
+	if rating == 0 {
+		rating = info.RatingKinopoisk
+	}
+	if rating == 0 {
+		rating = info.VoteAverage
+	}
+
+	desc := strings.TrimSpace(firstNonEmpty(info.Overview, info.Description, info.ShortDescription))
+	if len([]rune(desc)) > 900 {
+		desc = string([]rune(desc)[:900]) + "…"
+	}
+
+	photoURL := fmt.Sprintf("%s/api/v1/images/kp/%d", apiBase, kpID)
+	log.Printf("movie payload: kp_id=%d photoURL=%q poster=%q desc_len=%d", kpID, photoURL, info.PosterPath, len([]rune(desc)))
+
+	keyboard := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
+		{
+			{Text: "Плеер 1 (Collaps)", URL: movies.PlayerRedirectURL("collaps", "kp", kpID)},
+			{Text: "Плеер 2 (Lumex)", URL: movies.PlayerRedirectURL("lumex", "kp", kpID)},
+		},
+	})
+	if db != nil {
+		if watch, _ := db.GetWatchItemByKPID(ctx, kpID); watch != nil {
+			keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []tg.InlineKeyboardButton{{Text: "Смотреть в Telegram", CallbackData: fmt.Sprintf("watch:%d", kpID)}})
+		}
+	}
+	keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+
+	captionLines := []string{fmt.Sprintf("<b>%s</b>", html.EscapeString(displayTitle))}
+	if rating > 0 {
+		captionLines = append(captionLines, fmt.Sprintf("<b>Кинопоиск</b>: %.1f", rating))
+	}
+	if len(info.Genres) > 0 {
+		genres := make([]string, 0, 4)
+		for _, g := range info.Genres {
+			name := strings.TrimSpace(g.Name)
+			if name != "" {
+				genres = append(genres, name)
+			}
+			if len(genres) >= 4 {
+				break
+			}
+		}
+		if len(genres) > 0 {
+			captionLines = append(captionLines, fmt.Sprintf("<b>%s</b>", html.EscapeString(strings.Join(genres, ", "))))
+		}
+	}
+	caption := strings.Join(captionLines, "\n")
+	if desc != "" {
+		caption = caption + "\n\n" + html.EscapeString("«"+desc+"»")
+	}
+	caption = truncateRunes(caption, 950)
+	if strings.TrimSpace(caption) == "" {
+		caption = html.EscapeString(fmt.Sprintf("kp_%d", kpID))
+	}
+
+	return &moviePayload{
+		PhotoURL: photoURL,
+		Caption:  caption,
+		Keyboard: keyboard,
+	}, nil
+}
+
+func sendMovieCard(ctx context.Context, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, chatID int64, kpID int) error {
+	if kpID <= 0 {
+		return fmt.Errorf("invalid kp_id")
+	}
+
+	payload, err := buildMoviePayload(ctx, movies, db, kpID)
+	if err != nil {
+		return err
+	}
+	if payload.PhotoURL != "" {
+		if err := bot.SendPhoto(ctx, tg.SendPhotoRequest{
+			ChatID:      chatID,
+			Photo:       payload.PhotoURL,
+			Caption:     payload.Caption,
+			ParseMode:   "HTML",
+			ReplyMarkup: &payload.Keyboard,
+		}); err == nil {
+			return nil
+		}
+	}
+
+	return bot.SendMessage(ctx, tg.SendMessageRequest{
+		ChatID:      chatID,
+		Text:        payload.Caption,
+		ParseMode:   "HTML",
+		ReplyMarkup: &payload.Keyboard,
+	})
+}
+
+func stripHTMLTags(s string) string {
+	out := strings.Builder{}
+	inTag := false
+	for _, r := range s {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			out.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(out.String())
 }

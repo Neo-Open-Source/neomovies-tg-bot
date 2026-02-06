@@ -23,10 +23,14 @@ func NewClient(token string) *Client {
 }
 
 type InlineKeyboardButton struct {
-	Text         string `json:"text"`
-	URL          string `json:"url,omitempty"`
-	CallbackData string `json:"callback_data,omitempty"`
+	Text                         string  `json:"text"`
+	URL                          string  `json:"url,omitempty"`
+	CallbackData                 string  `json:"callback_data,omitempty"`
+	SwitchInlineQueryCurrentChat *string `json:"switch_inline_query_current_chat,omitempty"`
+	SwitchInlineQuery            *string `json:"switch_inline_query,omitempty"`
 }
+
+func StrPtr(s string) *string { return &s }
 
 type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
@@ -46,6 +50,23 @@ type InlineQueryResultPhoto struct {
 	Caption     string                `json:"caption,omitempty"`
 	ParseMode   string                `json:"parse_mode,omitempty"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type InputTextMessageContent struct {
+	MessageText string `json:"message_text"`
+	ParseMode   string `json:"parse_mode,omitempty"`
+}
+
+type InlineQueryResultArticle struct {
+	Type                string                   `json:"type"`
+	ID                  string                   `json:"id"`
+	Title               string                   `json:"title"`
+	InputMessageContent InputTextMessageContent  `json:"input_message_content"`
+	ReplyMarkup         *InlineKeyboardMarkup    `json:"reply_markup,omitempty"`
+	Description         string                   `json:"description,omitempty"`
+	ThumbURL            string                   `json:"thumb_url,omitempty"`
+	ThumbWidth          int                      `json:"thumb_width,omitempty"`
+	ThumbHeight         int                      `json:"thumb_height,omitempty"`
 }
 
 type AnswerInlineQueryRequest struct {
@@ -82,6 +103,18 @@ func (c *Client) SendMessage(ctx context.Context, req SendMessageRequest) error 
 	return c.post(ctx, "/sendMessage", req)
 }
 
+type SendPhotoRequest struct {
+	ChatID      int64                 `json:"chat_id"`
+	Photo       string                `json:"photo"`
+	Caption     string                `json:"caption,omitempty"`
+	ParseMode   string                `json:"parse_mode,omitempty"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+func (c *Client) SendPhoto(ctx context.Context, req SendPhotoRequest) error {
+	return c.post(ctx, "/sendPhoto", req)
+}
+
 type EditMessageTextRequest struct {
 	ChatID      int64                 `json:"chat_id"`
 	MessageID   int                   `json:"message_id"`
@@ -94,10 +127,30 @@ func (c *Client) EditMessageText(ctx context.Context, req EditMessageTextRequest
 	return c.post(ctx, "/editMessageText", req)
 }
 
+type InputMediaPhoto struct {
+	Type      string `json:"type"`
+	Media     string `json:"media"`
+	Caption   string `json:"caption,omitempty"`
+	ParseMode string `json:"parse_mode,omitempty"`
+}
+
+type EditMessageMediaRequest struct {
+	InlineMessageID string               `json:"inline_message_id,omitempty"`
+	ChatID          int64                `json:"chat_id,omitempty"`
+	MessageID       int                  `json:"message_id,omitempty"`
+	Media           InputMediaPhoto      `json:"media"`
+	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+func (c *Client) EditMessageMedia(ctx context.Context, req EditMessageMediaRequest) error {
+	return c.post(ctx, "/editMessageMedia", req)
+}
+
 type EditMessageReplyMarkupRequest struct {
-	ChatID      int64                 `json:"chat_id"`
-	MessageID   int                   `json:"message_id"`
-	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	InlineMessageID string              `json:"inline_message_id,omitempty"`
+	ChatID          int64               `json:"chat_id,omitempty"`
+	MessageID       int                 `json:"message_id,omitempty"`
+	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 func (c *Client) EditMessageReplyMarkup(ctx context.Context, req EditMessageReplyMarkupRequest) error {
