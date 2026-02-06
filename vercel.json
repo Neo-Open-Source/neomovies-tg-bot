@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/webhook.go": {
-      "runtime": "go1.x"
-    }
-  },
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/webhook.go" },
     { "src": "/(.*)", "dest": "/frontend/dist/$1" }
