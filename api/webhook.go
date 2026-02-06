@@ -730,30 +730,51 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		var ep *storage.Episode
-		for si := range item.Seasons {
-			if item.Seasons[si].Number != seasonNum {
-				continue
-			}
-			for ei := range item.Seasons[si].Episodes {
-				if item.Seasons[si].Episodes[ei].Number == epNum {
-					ep = &item.Seasons[si].Episodes[ei]
-					break
-				}
-			}
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum); err != nil {
+			log.Printf("episode send error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, epNum)
 		}
-		if ep != nil {
-			copiedID, err := bot.CopyMessage(ctx, chatID, ep.StorageChatID, ep.StorageMessageID)
-			if err == nil && copiedID > 0 {
-				closeKB := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
-					{{Text: "Закрыть", CallbackData: "close"}},
-				})
-				_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
-					ChatID:      chatID,
-					MessageID:   copiedID,
-					ReplyMarkup: &closeKB,
-				})
-			}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(data, "epnav:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 5 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		epNum, _ := strconv.Atoi(parts[3])
+		dir, _ := strconv.Atoi(parts[4])
+		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 || (dir != -1 && dir != 1) {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		item, _ := db.GetWatchItemByKPID(ctx, kpID)
+		if item == nil {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		chatID := int64(0)
+		msgID := 0
+		if cq.Message != nil {
+			chatID = cq.Message.Chat.ID
+			msgID = cq.Message.MessageID
+		}
+		if chatID == 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		nextEp := epNum + dir
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp); err != nil {
+			log.Printf("episode nav error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, nextEp)
+		} else if msgID != 0 {
+			_ = bot.DeleteMessage(ctx, chatID, msgID)
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
@@ -1380,4 +1401,66 @@ func stripHTMLTags(s string) string {
 		}
 	}
 	return strings.TrimSpace(out.String())
+}
+
+func findSeason(item *storage.WatchItem, seasonNum int) *storage.Season {
+	if item == nil {
+		return nil
+	}
+	for i := range item.Seasons {
+		if item.Seasons[i].Number == seasonNum {
+			return &item.Seasons[i]
+		}
+	}
+	return nil
+}
+
+func findEpisode(season *storage.Season, epNum int) (*storage.Episode, int) {
+	if season == nil {
+		return nil, -1
+	}
+	for i := range season.Episodes {
+		if season.Episodes[i].Number == epNum {
+			return &season.Episodes[i], i
+		}
+	}
+	return nil, -1
+}
+
+func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.WatchItem, chatID int64, seasonNum int, epNum int) error {
+	season := findSeason(item, seasonNum)
+	if season == nil {
+		return fmt.Errorf("season not found")
+	}
+	ep, idx := findEpisode(season, epNum)
+	if ep == nil || idx == -1 {
+		return fmt.Errorf("episode not found")
+	}
+
+	copiedID, err := bot.CopyMessage(ctx, chatID, ep.StorageChatID, ep.StorageMessageID)
+	if err != nil || copiedID <= 0 {
+		return err
+	}
+
+	hasPrev := idx > 0
+	hasNext := idx < len(season.Episodes)-1
+	rows := make([][]tg.InlineKeyboardButton, 0, 2)
+	if hasPrev || hasNext {
+		nav := []tg.InlineKeyboardButton{}
+		if hasPrev {
+			nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1", item.KPID, seasonNum, epNum)})
+		}
+		if hasNext {
+			nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1", item.KPID, seasonNum, epNum)})
+		}
+		rows = append(rows, nav)
+	}
+	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+	kb := tg.NewInlineKeyboardMarkup(rows)
+
+	return bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
+		ChatID:      chatID,
+		MessageID:   copiedID,
+		ReplyMarkup: &kb,
+	})
 }
