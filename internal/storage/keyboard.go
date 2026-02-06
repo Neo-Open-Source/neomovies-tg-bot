@@ -19,7 +19,7 @@ func (w *WatchItem) SeriesKeyboard() *tg.InlineKeyboardMarkup {
 	return &kb
 }
 
-func (w *WatchItem) SeasonKeyboard(seasonNum int) *tg.InlineKeyboardMarkup {
+func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMarkup {
 	if w == nil {
 		return nil
 	}
@@ -34,11 +34,57 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int) *tg.InlineKeyboardMarkup {
 		return w.SeriesKeyboard()
 	}
 
-	rows := make([][]tg.InlineKeyboardButton, 0, len(season.Episodes)+2)
-	for _, ep := range season.Episodes {
-		rows = append(rows, []tg.InlineKeyboardButton{{Text: fmt.Sprintf("%d серия", ep.Number), CallbackData: fmt.Sprintf("ep:%d:%d:%d", w.KPID, seasonNum, ep.Number)}})
+	if page < 1 {
+		page = 1
 	}
-	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Назад", CallbackData: fmt.Sprintf("watch:%d", w.KPID)}})
+	const perPage = 24
+	total := len(season.Episodes)
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+
+	rows := make([][]tg.InlineKeyboardButton, 0, perPage/3+4)
+	// Header row (tap to go back to season list)
+	rows = append(rows, []tg.InlineKeyboardButton{{Text: fmt.Sprintf("%d сезон", seasonNum), CallbackData: fmt.Sprintf("watch:%d", w.KPID)}})
+
+	row := []tg.InlineKeyboardButton{}
+	for i := start; i < end; i++ {
+		ep := season.Episodes[i]
+		row = append(row, tg.InlineKeyboardButton{
+			Text:         fmt.Sprintf("%d серия", ep.Number),
+			CallbackData: fmt.Sprintf("ep:%d:%d:%d", w.KPID, seasonNum, ep.Number),
+		})
+		if len(row) == 3 {
+			rows = append(rows, row)
+			row = []tg.InlineKeyboardButton{}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	if totalPages > 1 {
+		nav := []tg.InlineKeyboardButton{}
+		if page > 1 {
+			nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page-1)})
+		}
+		if page < totalPages {
+			nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page+1)})
+		}
+		if len(nav) > 0 {
+			rows = append(rows, nav)
+		}
+	}
+
 	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
 	kb := tg.NewInlineKeyboardMarkup(rows)
 	return &kb

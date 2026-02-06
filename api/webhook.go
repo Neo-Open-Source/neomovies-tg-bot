@@ -652,14 +652,49 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		if cq.Message != nil {
-			text := strings.TrimSpace(cq.Message.Text)
-			if text == "" {
-				text = strings.TrimSpace(item.Title)
-				if text == "" {
-					text = fmt.Sprintf("kp_%d", item.KPID)
-				}
+			title := strings.TrimSpace(item.Title)
+			if title == "" {
+				title = fmt.Sprintf("kp_%d", item.KPID)
 			}
-			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{ChatID: cq.Message.Chat.ID, MessageID: cq.Message.MessageID, Text: text, ReplyMarkup: item.SeasonKeyboard(seasonNum)})
+			text := fmt.Sprintf("%s\nСезон %d", title, seasonNum)
+			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
+				ChatID:      cq.Message.Chat.ID,
+				MessageID:   cq.Message.MessageID,
+				Text:        text,
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1),
+			})
+		}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(data, "seasonpage:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 4 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		pageNum, _ := strconv.Atoi(parts[3])
+		if kpID <= 0 || seasonNum <= 0 || pageNum <= 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		item, _ := db.GetWatchItemByKPID(ctx, kpID)
+		if item == nil {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if cq.Message != nil {
+			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
+				ChatID:      cq.Message.Chat.ID,
+				MessageID:   cq.Message.MessageID,
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, pageNum),
+			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
