@@ -64,3 +64,8 @@ func playerHandler(w http.ResponseWriter, r *http.Request) {
 
 	http.Redirect(w, r, content, http.StatusFound)
 }
+
+// Handler is the Vercel serverless entrypoint for /api/player.
+func Handler(w http.ResponseWriter, r *http.Request) {
+	playerHandler(w, r)
+}
