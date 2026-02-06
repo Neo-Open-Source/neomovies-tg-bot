@@ -757,11 +757,31 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		return
 	}
 
+	if text == "/help" || text == "help" {
+		adminChatIDStr := strings.TrimSpace(os.Getenv("ADMIN_CHAT_ID"))
+		if adminChatIDStr == "" {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("ADMIN_CHAT_ID не задан. Твой chat_id=%d", msg.Chat.ID)})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		adminChatID, err := strconv.ParseInt(adminChatIDStr, 10, 64)
+		if err != nil || adminChatID == 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("ADMIN_CHAT_ID неверный. Твой chat_id=%d", msg.Chat.ID)})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if msg.Chat.ID != adminChatID {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("Нет доступа. Твой chat_id=%d", msg.Chat.ID)})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	adminChatIDStr := strings.TrimSpace(os.Getenv("ADMIN_CHAT_ID"))
 	if adminChatIDStr == "" {
-		if text == "/help" || text == "help" {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("ADMIN_CHAT_ID не задан. Твой chat_id=%d", msg.Chat.ID)})
-		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -781,11 +801,6 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		return
 	}
 
-	if text == "/help" || text == "help" {
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
-		w.WriteHeader(http.StatusOK)
-		return
-	}
 	if strings.HasPrefix(text, "/addmovie ") {
 		parts := strings.Fields(text)
 		if len(parts) != 2 && len(parts) != 4 {
