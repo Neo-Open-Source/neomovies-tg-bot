@@ -218,9 +218,80 @@ func buildLibraryItem(ctx context.Context, movies *neomovies.Client, wItem *stor
 		return libraryItem{}, fmt.Errorf("not found")
 	}
 
+	// Fallback to search by kp_id if API returned empty fields
+	if info.Title == "" && info.NameRu == "" && info.Name == "" && info.NameOriginal == "" ||
+		(info.Overview == "" && info.Description == "" && info.ShortDescription == "") {
+		if sr, _ := movies.SearchMovies(ctx, strconv.Itoa(wItem.KPID), 1); sr != nil {
+			for _, m := range sr.Results {
+				matchID := m.ExternalIDs.KP
+				if matchID == 0 {
+					matchID = m.KinopoiskID
+				}
+				if matchID != wItem.KPID {
+					continue
+				}
+				if info.Title == "" && info.NameRu == "" && info.Name == "" && info.NameOriginal == "" {
+					info.Title = m.Title
+					info.NameRu = m.NameRu
+					info.Name = m.Name
+					info.NameOriginal = m.NameOriginal
+				}
+				if info.Overview == "" && info.Description == "" && info.ShortDescription == "" {
+					info.Overview = m.Overview
+					info.Description = m.Description
+					info.ShortDescription = m.ShortDescription
+				}
+				if len(info.Genres) == 0 && len(m.Genres) > 0 {
+					info.Genres = m.Genres
+				}
+				if info.Rating == 0 && m.Rating > 0 {
+					info.Rating = m.Rating
+				}
+				if info.RatingKinopoisk == 0 && m.RatingKinopoisk > 0 {
+					info.RatingKinopoisk = m.RatingKinopoisk
+				}
+				if info.VoteAverage == 0 && m.VoteAverage > 0 {
+					info.VoteAverage = m.VoteAverage
+				}
+				if info.Year == "" && m.Year != "" {
+					info.Year = m.Year
+				}
+				if info.ReleaseDate == "" && m.ReleaseDate != "" {
+					info.ReleaseDate = m.ReleaseDate
+				}
+				if info.ExternalIDs.KP == 0 && m.ExternalIDs.KP != 0 {
+					info.ExternalIDs.KP = m.ExternalIDs.KP
+				}
+				if info.ExternalIDs.IMDB == "" && m.ExternalIDs.IMDB != "" {
+					info.ExternalIDs.IMDB = m.ExternalIDs.IMDB
+				}
+				if info.PosterPath == "" && m.PosterPath != "" {
+					info.PosterPath = m.PosterPath
+				}
+				if info.PosterURLPreview == "" && m.PosterURLPreview != "" {
+					info.PosterURLPreview = m.PosterURLPreview
+				}
+				if info.PosterURL == "" && m.PosterURL != "" {
+					info.PosterURL = m.PosterURL
+				}
+				break
+			}
+		}
+	}
+
 	title := strings.TrimSpace(firstNonEmpty(info.Title, info.NameRu, info.Name, info.NameOriginal, wItem.Title))
+	if title == "" {
+		title = fmt.Sprintf("kp_%d", wItem.KPID)
+	}
 	poster := firstNonEmpty(info.PosterPath, info.PosterURLPreview, info.PosterURL)
-	posterURL := movies.ImageURL(poster, "kp_big", wItem.KPID)
+	posterURL := movies.ImageURL(poster, "kp", wItem.KPID)
+	if posterURL == "" {
+		apiBase := strings.TrimRight(os.Getenv("API_BASE"), "/")
+		if apiBase == "" {
+			apiBase = "https://api.neomovies.ru"
+		}
+		posterURL = fmt.Sprintf("%s/api/v1/images/kp/%d", apiBase, wItem.KPID)
+	}
 	rating := info.Rating
 	if rating == 0 {
 		rating = info.RatingKinopoisk

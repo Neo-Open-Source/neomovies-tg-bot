@@ -99,5 +99,3 @@ Vercel will:
 
 - **MongoDB**: Items metadata, seasons, episodes
 - **Telegram Channels**: Actual content (private, bot as admin)
-  - https://t.me/+d1dboZlVV55iZDky
-  - https://t.me/+2djkXcfWKiI1Yzk6
