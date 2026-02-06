@@ -97,6 +97,7 @@ type SendMessageRequest struct {
 	Text        string                `json:"text"`
 	ParseMode   string                `json:"parse_mode,omitempty"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	ReplyToMessageID int              `json:"reply_to_message_id,omitempty"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req SendMessageRequest) error {
@@ -157,22 +158,48 @@ func (c *Client) EditMessageReplyMarkup(ctx context.Context, req EditMessageRepl
 	return c.post(ctx, "/editMessageReplyMarkup", req)
 }
 
-func (c *Client) CopyMessage(ctx context.Context, toChatID int64, fromChatID int64, messageID int) error {
-	return c.post(ctx, "/copyMessage", map[string]any{"chat_id": toChatID, "from_chat_id": fromChatID, "message_id": messageID})
+func (c *Client) CopyMessage(ctx context.Context, toChatID int64, fromChatID int64, messageID int) (int, error) {
+	resp, err := c.postWithResult(ctx, "/copyMessage", map[string]any{"chat_id": toChatID, "from_chat_id": fromChatID, "message_id": messageID})
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		MessageID int `json:"message_id"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return 0, err
+	}
+	return result.MessageID, nil
 }
 
 func (c *Client) post(ctx context.Context, method string, payload any) error {
+	_, err := c.postWithResult(ctx, method, payload)
+	return err
+}
+
+func (c *Client) postWithResult(ctx context.Context, method string, payload any) ([]byte, error) {
 	b, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+method, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("telegram api %s status %d: %s", method, resp.StatusCode, string(body))
+		return nil, fmt.Errorf("telegram api %s status %d: %s", method, resp.StatusCode, string(body))
 	}
-	return nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var wrapper struct {
+		Ok     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Ok {
+		return wrapper.Result, nil
+	}
+	return body, nil
 }

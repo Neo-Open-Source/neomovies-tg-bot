@@ -558,6 +558,9 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	if data == "close" {
 		if cq.Message != nil {
 			_ = bot.DeleteMessage(ctx, cq.Message.Chat.ID, cq.Message.MessageID)
+			if cq.Message.ReplyToMessage != nil {
+				_ = bot.DeleteMessage(ctx, cq.Message.Chat.ID, cq.Message.ReplyToMessage.MessageID)
+			}
 		} else if cq.InlineMessageID != "" {
 			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{InlineMessageID: cq.InlineMessageID, ReplyMarkup: &tg.InlineKeyboardMarkup{InlineKeyboard: [][]tg.InlineKeyboardButton{}}})
 		}
@@ -607,7 +610,18 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 
 		if cq.Message != nil {
 			if item.Type == "movie" {
-				_ = bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, item.StorageMessageID)
+				copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, item.StorageMessageID)
+				if err == nil && copiedID > 0 {
+					closeKB := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
+						{{Text: "Закрыть", CallbackData: "close"}},
+					})
+					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+						ChatID:           cq.Message.Chat.ID,
+						Text:             " ",
+						ReplyMarkup:      &closeKB,
+						ReplyToMessageID: copiedID,
+					})
+				}
 			} else if item.Type == "series" {
 				title := strings.TrimSpace(item.Title)
 				if title == "" {
@@ -698,7 +712,18 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			}
 		}
 		if ep != nil {
-			_ = bot.CopyMessage(ctx, chatID, ep.StorageChatID, ep.StorageMessageID)
+			copiedID, err := bot.CopyMessage(ctx, chatID, ep.StorageChatID, ep.StorageMessageID)
+			if err == nil && copiedID > 0 {
+				closeKB := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
+					{{Text: "Закрыть", CallbackData: "close"}},
+				})
+				_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+					ChatID:           chatID,
+					Text:             " ",
+					ReplyMarkup:      &closeKB,
+					ReplyToMessageID: copiedID,
+				})
+			}
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
