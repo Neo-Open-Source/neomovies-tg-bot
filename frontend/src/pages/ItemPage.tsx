@@ -9,6 +9,7 @@ import {
   Link,
   Paper,
   Grid,
+  Button,
 } from '@mui/material';
 import { useParams, Link as RouterLink } from 'react-router-dom';
 import { useState, useEffect } from 'react';
@@ -99,6 +100,19 @@ export const ItemPage = () => {
                 color={item.type === 'movie' ? 'primary' : 'secondary'}
                 sx={{ fontSize: '0.875rem', fontWeight: 600 }}
               />
+              {item.kp_id > 0 && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  component="a"
+                  href={`https://t.me/neomovies_tg_bot?start=get_${item.kp_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{ textTransform: 'none', fontWeight: 700 }}
+                >
+                  Смотреть
+                </Button>
+              )}
               {typeof item.seasons_count === 'number' && item.seasons_count > 0 && (
                 <Chip label={`${item.seasons_count} сезон(ов)`} variant="outlined" />
               )}

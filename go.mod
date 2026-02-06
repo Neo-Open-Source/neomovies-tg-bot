@@ -1,4 +1,4 @@
-module neomovies-tg-bot
+module handler
 
 go 1.22
 

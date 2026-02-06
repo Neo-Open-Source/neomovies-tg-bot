@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	handler "neomovies-tg-bot/api"
+	handler "handler/api"
 )
 
 func main() {

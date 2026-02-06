@@ -152,6 +152,29 @@ func (c *Client) GetMovieByKPID(ctx context.Context, kpID int) (*Movie, error) {
 	if kpID <= 0 {
 		return nil, fmt.Errorf("invalid kp_id")
 	}
+	primary, err := c.getMovieUnifiedKP(ctx, kpID)
+	if err == nil && !isMovieEmpty(primary) {
+		return primary, nil
+	}
+
+	fallback, err2 := c.getMovieByIDType(ctx, kpID, "kp")
+	if err2 == nil && !isMovieEmpty(fallback) {
+		return fallback, nil
+	}
+
+	if primary != nil {
+		return primary, err
+	}
+	if fallback != nil {
+		return fallback, err2
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, err2
+}
+
+func (c *Client) getMovieUnifiedKP(ctx context.Context, kpID int) (*Movie, error) {
 	u := fmt.Sprintf("%s/api/v1/movie/kp_%d", c.apiBase, kpID)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	resp, err := c.hc.Do(req)
@@ -168,8 +191,10 @@ func (c *Client) GetMovieByKPID(ctx context.Context, kpID int) (*Movie, error) {
 		Success bool  `json:"success"`
 		Data    Movie `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err == nil && (wrapper.Data.KinopoiskID != 0 || wrapper.Data.ExternalIDs.KP != 0) {
-		return &wrapper.Data, nil
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err == nil {
+		if wrapper.Data.KinopoiskID != 0 || wrapper.Data.ExternalIDs.KP != 0 || !isMovieEmpty(&wrapper.Data) {
+			return &wrapper.Data, nil
+		}
 	}
 
 	_ = resp.Body.Close()
@@ -184,6 +209,64 @@ func (c *Client) GetMovieByKPID(ctx context.Context, kpID int) (*Movie, error) {
 		return nil, err
 	}
 	return &direct, nil
+}
+
+func (c *Client) getMovieByIDType(ctx context.Context, kpID int, idType string) (*Movie, error) {
+	u, _ := url.Parse(fmt.Sprintf("%s/api/v1/movies/%d", c.apiBase, kpID))
+	q := u.Query()
+	if idType != "" {
+		q.Set("id_type", idType)
+	}
+	q.Set("lang", "ru")
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("neomovies movies get status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var wrapper struct {
+		Success bool  `json:"success"`
+		Data    Movie `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err == nil {
+		if wrapper.Data.KinopoiskID != 0 || wrapper.Data.ExternalIDs.KP != 0 || !isMovieEmpty(&wrapper.Data) {
+			return &wrapper.Data, nil
+		}
+	}
+
+	_ = resp.Body.Close()
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp2, err := c.hc.Do(req2)
+	if err != nil {
+		return nil, err
+	}
+	defer resp2.Body.Close()
+	var direct Movie
+	if err := json.NewDecoder(resp2.Body).Decode(&direct); err != nil {
+		return nil, err
+	}
+	return &direct, nil
+}
+
+func isMovieEmpty(m *Movie) bool {
+	if m == nil {
+		return true
+	}
+	titlePresent := strings.TrimSpace(m.Title) != "" ||
+		strings.TrimSpace(m.NameRu) != "" ||
+		strings.TrimSpace(m.Name) != "" ||
+		strings.TrimSpace(m.NameOriginal) != ""
+	descPresent := strings.TrimSpace(m.Overview) != "" ||
+		strings.TrimSpace(m.Description) != "" ||
+		strings.TrimSpace(m.ShortDescription) != ""
+	return !(titlePresent || descPresent)
 }
 
 type TorrentResult struct {
@@ -271,7 +354,7 @@ func sortStrings(s []string) {
 	}
 }
 
-var kpPosterRe = regexp.MustCompile(`kinopoiskapiunofficial\\.tech/images/posters/(kp|kp_small|kp_big)/(\\d+)\\.jpg`)
+var kpPosterRe = regexp.MustCompile(`kinopoiskapiunofficial\.tech/images/posters/(kp|kp_small|kp_big)/(\d+)\.jpg`)
 
 func (c *Client) ImageURL(path string, kpType string, kpID int) string {
 	path = strings.TrimSpace(path)

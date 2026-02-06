@@ -3,7 +3,7 @@ package storage
 import (
 	"fmt"
 
-	"neomovies-tg-bot/internal/tg"
+	"handler/internal/tg"
 )
 
 func (w *WatchItem) SeriesKeyboard() *tg.InlineKeyboardMarkup {

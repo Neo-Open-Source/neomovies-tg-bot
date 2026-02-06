@@ -8,15 +8,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"neomovies-tg-bot/internal/neomovies"
-	"neomovies-tg-bot/internal/storage"
-	"neomovies-tg-bot/internal/tg"
+	"handler/internal/neomovies"
+	"handler/internal/storage"
+	"handler/internal/tg"
 )
 
 type update struct {
@@ -708,9 +710,24 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 }
 
 func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, movies *neomovies.Client, db *storage.Mongo, msg *message) {
-	log.Printf("message received chat_id=%d text=%q", msg.Chat.ID, strings.TrimSpace(msg.Text))
-	if strings.HasPrefix(strings.TrimSpace(msg.Text), "/start") {
+	text := strings.TrimSpace(msg.Text)
+	log.Printf("message received chat_id=%d text=%q", msg.Chat.ID, text)
+	if strings.HasPrefix(text, "/start") {
 		log.Printf("/start from chat_id=%d", msg.Chat.ID)
+		parts := strings.Fields(text)
+		if len(parts) > 1 {
+			payload := strings.TrimSpace(parts[1])
+			if strings.HasPrefix(payload, "get_") {
+				idStr := strings.TrimPrefix(payload, "get_")
+				if kpID, _ := strconv.Atoi(idStr); kpID > 0 {
+					if err := sendMovieCard(ctx, bot, movies, db, msg.Chat.ID, kpID); err != nil {
+						log.Printf("start get error: %v (kp_id=%d)", err, kpID)
+					}
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+		}
 		kb := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
 			{{Text: "Фильмы", CallbackData: "menu:movies"}, {Text: "Сериалы", CallbackData: "menu:series"}},
 			{{Text: "Поиск", SwitchInlineQueryCurrentChat: tg.StrPtr("")}},
@@ -722,8 +739,6 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-
-	text := strings.TrimSpace(msg.Text)
 	if strings.HasPrefix(text, "/get ") {
 		parts := strings.Fields(text)
 		if len(parts) < 2 {
@@ -932,6 +947,59 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+var iframeSrcRe = regexp.MustCompile(`(?i)src=\"([^\"]+)\"`)
+var iframeDataSrcRe = regexp.MustCompile(`(?i)data-src=\"([^\"]+)\"`)
+
+func playerHandler(w http.ResponseWriter, r *http.Request) {
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	idType := strings.TrimSpace(r.URL.Query().Get("idType"))
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if provider == "" || idType == "" || id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	apiBase := strings.TrimRight(os.Getenv("API_BASE"), "/")
+	if apiBase == "" {
+		apiBase = "https://api.neomovies.ru"
+	}
+
+	u := fmt.Sprintf("%s/api/v1/players/%s/%s/%s", apiBase, url.PathEscape(provider), url.PathEscape(idType), url.PathEscape(id))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 9*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+
+	content := strings.TrimSpace(string(b))
+	if strings.HasPrefix(content, "<") {
+		if m := iframeSrcRe.FindStringSubmatch(content); len(m) == 2 {
+			http.Redirect(w, r, m[1], http.StatusFound)
+			return
+		}
+		if m := iframeDataSrcRe.FindStringSubmatch(content); len(m) == 2 {
+			http.Redirect(w, r, m[1], http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(b)
+		return
+	}
+
+	http.Redirect(w, r, content, http.StatusFound)
 }
 
 func firstNonEmpty(vals ...string) string {
