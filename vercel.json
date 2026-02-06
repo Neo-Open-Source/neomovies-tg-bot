@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "api/webhook.go": {
+      "runtime": "go1.x"
+    }
+  },
+  "routes": [
+    { "src": "/$", "dest": "/index.html" },
+    { "src": "/item$", "dest": "/item.html" },
+    { "src": "/api/library$", "dest": "/api/webhook.go" },
+    { "src": "/api/library/item$", "dest": "/api/webhook.go" },
+    { "src": "/api/webhook", "dest": "/api/webhook.go" },
+    { "src": "/api/player", "dest": "/api/webhook.go" }
+  ]
+}
