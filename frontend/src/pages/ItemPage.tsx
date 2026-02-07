@@ -55,6 +55,31 @@ export const ItemPage = () => {
     );
   }
 
+  const episodes = item.seasons
+    ? item.seasons.flatMap((s) => (s.episodes || []).map((ep) => ({ season: s.number, ...ep })))
+    : [];
+
+  const getMostCommon = (key: 'voice' | 'quality') => {
+    const map = new Map<string, number>();
+    for (const ep of episodes) {
+      const val = (ep[key] || '').trim();
+      if (!val) continue;
+      map.set(val, (map.get(val) || 0) + 1);
+    }
+    let top = '';
+    let max = 0;
+    for (const [k, v] of map.entries()) {
+      if (v > max) {
+        max = v;
+        top = k;
+      }
+    }
+    return top;
+  };
+
+  const baseVoice = (item.voice || '').trim() || getMostCommon('voice');
+  const baseQuality = (item.quality || '').trim() || getMostCommon('quality');
+
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       {/* Breadcrumbs */}
@@ -151,18 +176,18 @@ export const ItemPage = () => {
               )}
             </Box>
 
-            {item.type === 'series' && (item.voice || item.quality) && (
+            {(baseVoice || baseQuality) && (
               <Box sx={{ mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-                {item.voice && (
+                {baseVoice && (
                   <Chip
-                    label={`Озвучка: ${item.voice}`}
+                    label={`Озвучка: ${baseVoice}`}
                     variant="outlined"
                     sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 30 }}
                   />
                 )}
-                {item.quality && (
+                {baseQuality && (
                   <Chip
-                    label={`Качество: ${item.quality}`}
+                    label={`Качество: ${baseQuality}`}
                     variant="outlined"
                     sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 30 }}
                   />
@@ -238,31 +263,7 @@ export const ItemPage = () => {
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   {(() => {
-                    const episodes = item.seasons.flatMap((s) =>
-                      (s.episodes || []).map((ep) => ({ season: s.number, ...ep })),
-                    );
                     if (episodes.length === 0) return null;
-
-                    const countBy = (key: 'voice' | 'quality') => {
-                      const map = new Map<string, number>();
-                      for (const ep of episodes) {
-                        const val = (ep[key] || '').trim();
-                        if (!val) continue;
-                        map.set(val, (map.get(val) || 0) + 1);
-                      }
-                      let top = '';
-                      let max = 0;
-                      for (const [k, v] of map.entries()) {
-                        if (v > max) {
-                          max = v;
-                          top = k;
-                        }
-                      }
-                      return top;
-                    };
-
-                    const baseVoice = (item.voice || '').trim() || countBy('voice');
-                    const baseQuality = (item.quality || '').trim() || countBy('quality');
 
                     const chips = episodes.flatMap((ep) => {
                       const epVoice = (ep.voice || '').trim();
