@@ -864,7 +864,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		kb := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
 			{{Text: "Фильмы", CallbackData: "menu:movies"}, {Text: "Сериалы", CallbackData: "menu:series"}},
 			{{Text: "Поиск", SwitchInlineQueryCurrentChat: tg.StrPtr("")}},
-			{{Text: "Кинотека в боте", URL: "https://tg.neomovies.ru/"}},
+			{{Text: "Кинотека в боте(Сайт)", URL: "https://tg.neomovies.ru/"}}, {{Text: "Кинотека в боте(Каналл)", URL: "https://t.me/neomovies_tg"}},
 			{{Text: "Закрыть", CallbackData: "close"}},
 		})
 		if err := bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Это библиотека кино и сериалов с быстрым поиском.\n\nНажми “Поиск” и введи название — я покажу карточки.\n\nЕсли просто написать @neomovies_tg_bot без текста — покажу популярное.", ReplyMarkup: &kb}); err != nil {
