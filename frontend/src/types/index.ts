@@ -10,9 +10,21 @@ export interface LibraryItem {
   genres?: string[];
   voice?: string;
   quality?: string;
+  seasons?: SeasonMeta[];
   seasons_count?: number;
   episodes_count?: number;
   voices?: string[];
 }
 
 export type MovieDetails = LibraryItem;
+
+export interface EpisodeMeta {
+  number: number;
+  voice?: string;
+  quality?: string;
+}
+
+export interface SeasonMeta {
+  number: number;
+  episodes?: EpisodeMeta[];
+}

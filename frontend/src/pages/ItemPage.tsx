@@ -224,6 +224,41 @@ export const ItemPage = () => {
                 </Box>
               </Box>
             )}
+
+            {/* Episode overrides */}
+            {item.type === 'series' && item.seasons && item.seasons.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body1" fontWeight={600} gutterBottom>
+                  Отличия по сериям
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  {item.seasons.flatMap((season) =>
+                    (season.episodes || []).flatMap((ep) => {
+                      const epVoice = ep.voice?.trim() || '';
+                      const epQuality = ep.quality?.trim() || '';
+                      const baseVoice = item.voice?.trim() || '';
+                      const baseQuality = item.quality?.trim() || '';
+                      const showVoice = epVoice && epVoice !== baseVoice;
+                      const showQuality = epQuality && epQuality !== baseQuality;
+                      if (!showVoice && !showQuality) return [];
+                      const parts = [];
+                      if (showVoice) parts.push(epVoice);
+                      if (showQuality) parts.push(epQuality);
+                      const label = `S${season.number}E${ep.number}: ${parts.join(', ')}`;
+                      return [
+                        <Chip
+                          key={`${season.number}-${ep.number}`}
+                          label={label}
+                          size="small"
+                          variant="outlined"
+                          sx={{ borderColor: 'rgba(255,255,255,0.18)', color: 'text.primary' }}
+                        />,
+                      ];
+                    }),
+                  )}
+                </Box>
+              </Box>
+            )}
           </Grid>
         </Grid>
       </Paper>

@@ -39,6 +39,8 @@ type Episode struct {
 	Number           int   `bson:"number"`
 	StorageChatID    int64 `bson:"storage_chat_id"`
 	StorageMessageID int   `bson:"storage_message_id"`
+	Voice            string `bson:"voice,omitempty"`
+	Quality          string `bson:"quality,omitempty"`
 }
 
 func NewMongo(ctx context.Context, uri string) (*Mongo, error) {
@@ -87,7 +89,7 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, qu
 	return err
 }
 
-func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string, voice string, quality string) error {
+func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string) error {
 	if m == nil {
 		return nil
 	}
@@ -97,8 +99,6 @@ func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string, v
 			"kp_id":      kpID,
 			"type":       "series",
 			"title":      title,
-			"voice":      voice,
-			"quality":    quality,
 			"updated_at": time.Now(),
 		}},
 		options.Update().SetUpsert(true),
@@ -106,7 +106,7 @@ func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string, v
 	return err
 }
 
-func (m *Mongo) UpsertSeriesEpisode(ctx context.Context, kpID int, seasonNum int, episodeNum int, storageChatID int64, storageMessageID int) error {
+func (m *Mongo) UpsertSeriesEpisode(ctx context.Context, kpID int, seasonNum int, episodeNum int, voice string, quality string, storageChatID int64, storageMessageID int) error {
 	if m == nil {
 		return nil
 	}
@@ -143,7 +143,7 @@ func (m *Mongo) UpsertSeriesEpisode(ctx context.Context, kpID int, seasonNum int
 			break
 		}
 	}
-	newEp := Episode{Number: episodeNum, StorageChatID: storageChatID, StorageMessageID: storageMessageID}
+	newEp := Episode{Number: episodeNum, StorageChatID: storageChatID, StorageMessageID: storageMessageID, Voice: voice, Quality: quality}
 	if epIdx == -1 {
 		eps = append(eps, newEp)
 	} else {
