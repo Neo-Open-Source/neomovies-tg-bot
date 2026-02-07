@@ -149,21 +149,26 @@ export const ItemPage = () => {
                   sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
                 />
               )}
-              {item.voice && (
-                <Chip
-                  label={item.voice}
-                  variant="outlined"
-                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
-                />
-              )}
-              {item.quality && (
-                <Chip
-                  label={item.quality}
-                  variant="outlined"
-                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
-                />
-              )}
             </Box>
+
+            {item.type === 'series' && (item.voice || item.quality) && (
+              <Box sx={{ mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+                {item.voice && (
+                  <Chip
+                    label={`Озвучка: ${item.voice}`}
+                    variant="outlined"
+                    sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 30 }}
+                  />
+                )}
+                {item.quality && (
+                  <Chip
+                    label={`Качество: ${item.quality}`}
+                    variant="outlined"
+                    sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 30 }}
+                  />
+                )}
+              </Box>
+            )}
 
             {/* Ratings */}
             {typeof item.rating === 'number' && item.rating > 0 && (
@@ -232,30 +237,57 @@ export const ItemPage = () => {
                   Отличия по сериям
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {item.seasons.flatMap((season) =>
-                    (season.episodes || []).flatMap((ep) => {
-                      const epVoice = ep.voice?.trim() || '';
-                      const epQuality = ep.quality?.trim() || '';
-                      const baseVoice = item.voice?.trim() || '';
-                      const baseQuality = item.quality?.trim() || '';
+                  {(() => {
+                    const episodes = item.seasons.flatMap((s) =>
+                      (s.episodes || []).map((ep) => ({ season: s.number, ...ep })),
+                    );
+                    if (episodes.length === 0) return null;
+
+                    const countBy = (key: 'voice' | 'quality') => {
+                      const map = new Map<string, number>();
+                      for (const ep of episodes) {
+                        const val = (ep[key] || '').trim();
+                        if (!val) continue;
+                        map.set(val, (map.get(val) || 0) + 1);
+                      }
+                      let top = '';
+                      let max = 0;
+                      for (const [k, v] of map.entries()) {
+                        if (v > max) {
+                          max = v;
+                          top = k;
+                        }
+                      }
+                      return top;
+                    };
+
+                    const baseVoice = (item.voice || '').trim() || countBy('voice');
+                    const baseQuality = (item.quality || '').trim() || countBy('quality');
+
+                    const chips = episodes.flatMap((ep) => {
+                      const epVoice = (ep.voice || '').trim();
+                      const epQuality = (ep.quality || '').trim();
                       const showVoice = epVoice && epVoice !== baseVoice;
                       const showQuality = epQuality && epQuality !== baseQuality;
                       if (!showVoice && !showQuality) return [];
                       const parts = [];
                       if (showVoice) parts.push(epVoice);
                       if (showQuality) parts.push(epQuality);
-                      const label = `S${season.number}E${ep.number}: ${parts.join(', ')}`;
+                      const label = `S${ep.season}E${ep.number}: ${parts.join(', ')}`;
                       return [
                         <Chip
-                          key={`${season.number}-${ep.number}`}
+                          key={`${ep.season}-${ep.number}`}
                           label={label}
                           size="small"
                           variant="outlined"
                           sx={{ borderColor: 'rgba(255,255,255,0.18)', color: 'text.primary' }}
                         />,
                       ];
-                    }),
-                  )}
+                    });
+
+                    if (chips.length === 0) return null;
+                    return chips;
+                  })()}
                 </Box>
               </Box>
             )}

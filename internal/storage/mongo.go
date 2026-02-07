@@ -169,6 +169,77 @@ func (m *Mongo) UpsertSeriesEpisode(ctx context.Context, kpID int, seasonNum int
 	return err
 }
 
+func (m *Mongo) DeleteSeriesEpisode(ctx context.Context, kpID int, seasonNum int, episodeNum int) error {
+	if m == nil {
+		return nil
+	}
+	item, err := m.GetWatchItemByKPID(ctx, kpID)
+	if err != nil || item == nil {
+		return err
+	}
+	updated := false
+	for si := range item.Seasons {
+		if item.Seasons[si].Number != seasonNum {
+			continue
+		}
+		eps := item.Seasons[si].Episodes
+		out := make([]Episode, 0, len(eps))
+		for _, ep := range eps {
+			if ep.Number == episodeNum {
+				updated = true
+				continue
+			}
+			out = append(out, ep)
+		}
+		item.Seasons[si].Episodes = out
+		break
+	}
+	if !updated {
+		return nil
+	}
+	item.UpdatedAt = time.Now()
+	_, err = m.col.UpdateOne(ctx,
+		bson.M{"kp_id": kpID},
+		bson.M{"$set": bson.M{
+			"seasons":    item.Seasons,
+			"updated_at": item.UpdatedAt,
+		}},
+	)
+	return err
+}
+
+func (m *Mongo) DeleteSeason(ctx context.Context, kpID int, seasonNum int) error {
+	if m == nil {
+		return nil
+	}
+	item, err := m.GetWatchItemByKPID(ctx, kpID)
+	if err != nil || item == nil {
+		return err
+	}
+	out := make([]Season, 0, len(item.Seasons))
+	removed := false
+	for _, s := range item.Seasons {
+		if s.Number == seasonNum {
+			removed = true
+			continue
+		}
+		out = append(out, s)
+	}
+	if !removed {
+		return nil
+	}
+	item.Seasons = out
+	item.UpdatedAt = time.Now()
+	_, err = m.col.UpdateOne(ctx,
+		bson.M{"kp_id": kpID},
+		bson.M{"$set": bson.M{
+			"seasons":    item.Seasons,
+			"updated_at": item.UpdatedAt,
+		}},
+	)
+	return err
+}
+
 func (m *Mongo) DeleteByKPID(ctx context.Context, kpID int) error {
 	if m == nil {
 		return nil

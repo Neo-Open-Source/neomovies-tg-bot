@@ -888,7 +888,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/delepisode <kp_id> <season> <episode>\n/delseason <kp_id> <season>\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -1025,6 +1025,45 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		}
 		textOut := fmt.Sprintf("kp_id=%d\ntype=%s\ntitle=%s\nmovie_ref=%d:%d\nseasons=%d", item.KPID, item.Type, item.Title, item.StorageChatID, item.StorageMessageID, len(item.Seasons))
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: textOut})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(text, "/delepisode ") {
+		parts := strings.Fields(text)
+		if len(parts) < 4 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /delepisode <kp_id> <season> <episode>"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		epNum, _ := strconv.Atoi(parts[3])
+		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid args"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = db.DeleteSeriesEpisode(ctx, kpID, seasonNum, epNum)
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(text, "/delseason ") {
+		parts := strings.Fields(text)
+		if len(parts) < 3 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /delseason <kp_id> <season>"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		if kpID <= 0 || seasonNum <= 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid args"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = db.DeleteSeason(ctx, kpID, seasonNum)
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
