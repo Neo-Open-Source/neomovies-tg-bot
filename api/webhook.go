@@ -71,6 +71,7 @@ type message struct {
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("webhook request: method=%s path=%s", r.Method, r.URL.Path)
 	if r.URL.Path == "/api/library" || r.URL.Path == "/api/library/item" {
 		libraryHandler(w, r)
 		return
