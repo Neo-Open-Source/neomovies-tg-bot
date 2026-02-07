@@ -651,9 +651,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 					copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, mid)
 					if err == nil && copiedID > 0 {
 						lastCopied = copiedID
+						log.Printf("copy movie part ok kp_id=%d mid=%d new_id=%d", item.KPID, mid, copiedID)
 					} else {
+						log.Printf("copy movie part error kp_id=%d mid=%d err=%v", item.KPID, mid, err)
 						failed = append(failed, mid)
 					}
+					time.Sleep(250 * time.Millisecond)
 				}
 				if lastCopied > 0 {
 					closeKB := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
@@ -663,12 +666,6 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 						ChatID:      cq.Message.Chat.ID,
 						MessageID:   lastCopied,
 						ReplyMarkup: &closeKB,
-					})
-				}
-				if len(messageIDs) > 1 {
-					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
-						ChatID: cq.Message.Chat.ID,
-						Text:   fmt.Sprintf("Части: %s (отправлено=%d, ошибок=%d)", joinMessageIDs(messageIDs), len(messageIDs)-len(failed), len(failed)),
 					})
 				}
 				if len(failed) > 0 {
