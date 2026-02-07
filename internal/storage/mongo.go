@@ -22,6 +22,8 @@ type WatchItem struct {
 	KPID             int                `bson:"kp_id"`
 	Type             string             `bson:"type"`
 	Title            string             `bson:"title,omitempty"`
+	Voice            string             `bson:"voice,omitempty"`
+	Quality          string             `bson:"quality,omitempty"`
 	StorageChatID    int64              `bson:"storage_chat_id,omitempty"`
 	StorageMessageID int                `bson:"storage_message_id,omitempty"`
 	Seasons          []Season           `bson:"seasons,omitempty"`
@@ -65,7 +67,7 @@ func (m *Mongo) GetWatchItemByKPID(ctx context.Context, kpID int) (*WatchItem, e
 	return &item, err
 }
 
-func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, storageChatID int64, storageMessageID int) error {
+func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, quality string, storageChatID int64, storageMessageID int) error {
 	if m == nil {
 		return nil
 	}
@@ -74,6 +76,8 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, storageChatID in
 		bson.M{"$set": bson.M{
 			"kp_id":              kpID,
 			"type":               "movie",
+			"voice":              voice,
+			"quality":            quality,
 			"storage_chat_id":    storageChatID,
 			"storage_message_id": storageMessageID,
 			"updated_at":         time.Now(),
@@ -83,7 +87,7 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, storageChatID in
 	return err
 }
 
-func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string) error {
+func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string, voice string, quality string) error {
 	if m == nil {
 		return nil
 	}
@@ -93,6 +97,8 @@ func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string) e
 			"kp_id":      kpID,
 			"type":       "series",
 			"title":      title,
+			"voice":      voice,
+			"quality":    quality,
 			"updated_at": time.Now(),
 		}},
 		options.Update().SetUpsert(true),

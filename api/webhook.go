@@ -142,6 +142,8 @@ type libraryItem struct {
 	Rating        float64  `json:"rating"`
 	Overview      string   `json:"overview"`
 	Genres        []string `json:"genres,omitempty"`
+	Voice         string   `json:"voice,omitempty"`
+	Quality       string   `json:"quality,omitempty"`
 	SeasonsCount  int      `json:"seasons_count,omitempty"`
 	EpisodesCount int      `json:"episodes_count,omitempty"`
 	Voices        []string `json:"voices,omitempty"`
@@ -339,6 +341,8 @@ func buildLibraryItem(ctx context.Context, movies *neomovies.Client, wItem *stor
 		Rating:        rating,
 		Overview:      overview,
 		Genres:        genres,
+		Voice:         strings.TrimSpace(wItem.Voice),
+		Quality:       strings.TrimSpace(wItem.Quality),
 		SeasonsCount:  seasonsCount,
 		EpisodesCount: episodesCount,
 		Voices:        voices,
@@ -852,7 +856,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title> <voice> <quality>\n\n/addepisode <kp_id> <season> <episode> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode>   (reply to forwarded channel post)\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -880,17 +884,19 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 
 	if strings.HasPrefix(text, "/addmovie ") {
 		parts := strings.Fields(text)
-		if len(parts) != 2 && len(parts) != 4 {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmovie <kp_id> <storage_chat_id> <storage_message_id> OR reply to forwarded post: /addmovie <kp_id>"})
+		if len(parts) != 4 && len(parts) != 6 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id> OR reply to forwarded post: /addmovie <kp_id> <voice> <quality>"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		kpID, _ := strconv.Atoi(parts[1])
+		voice := strings.TrimSpace(parts[2])
+		quality := strings.TrimSpace(parts[3])
 		var storageChatID int64
 		var storageMsgID int
-		if len(parts) == 4 {
-			storageChatID, _ = strconv.ParseInt(parts[2], 10, 64)
-			storageMsgID, _ = strconv.Atoi(parts[3])
+		if len(parts) == 6 {
+			storageChatID, _ = strconv.ParseInt(parts[4], 10, 64)
+			storageMsgID, _ = strconv.Atoi(parts[5])
 		} else {
 			if msg.ReplyToMessage == nil || msg.ReplyToMessage.ForwardFromChat == nil || msg.ReplyToMessage.ForwardFromMessageID == 0 {
 				_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Reply to a forwarded post from the storage channel."})
@@ -900,12 +906,12 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			storageChatID = msg.ReplyToMessage.ForwardFromChat.ID
 			storageMsgID = msg.ReplyToMessage.ForwardFromMessageID
 		}
-		if kpID <= 0 || storageChatID == 0 || storageMsgID <= 0 {
+		if kpID <= 0 || voice == "" || quality == "" || storageChatID == 0 || storageMsgID <= 0 {
 			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid args"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = db.UpsertWatchMovie(ctx, kpID, storageChatID, storageMsgID)
+		_ = db.UpsertWatchMovie(ctx, kpID, voice, quality, storageChatID, storageMsgID)
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
 		w.WriteHeader(http.StatusOK)
 		return
@@ -913,19 +919,28 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	if strings.HasPrefix(text, "/addseries ") {
 		rest := strings.TrimSpace(strings.TrimPrefix(text, "/addseries"))
 		fields := strings.Fields(rest)
-		if len(fields) < 2 {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addseries <kp_id> <title>"})
+		if len(fields) < 4 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addseries <kp_id> <title> <voice> <quality>"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		kpID, _ := strconv.Atoi(fields[0])
-		title := strings.TrimSpace(rest[len(fields[0]):])
-		if kpID <= 0 || title == "" {
+		voice := strings.TrimSpace(fields[len(fields)-2])
+		quality := strings.TrimSpace(fields[len(fields)-1])
+		titlePart := strings.TrimSpace(rest[len(fields[0]):])
+		titleTokens := strings.Fields(titlePart)
+		if len(titleTokens) < 3 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addseries <kp_id> <title> <voice> <quality>"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		title := strings.Join(titleTokens[:len(titleTokens)-2], " ")
+		if kpID <= 0 || title == "" || voice == "" || quality == "" {
 			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid args"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = db.UpsertWatchSeries(ctx, kpID, title)
+		_ = db.UpsertWatchSeries(ctx, kpID, title, voice, quality)
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
 		w.WriteHeader(http.StatusOK)
 		return

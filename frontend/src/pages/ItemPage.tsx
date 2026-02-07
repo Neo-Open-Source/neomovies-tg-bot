@@ -149,6 +149,20 @@ export const ItemPage = () => {
                   sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
                 />
               )}
+              {item.voice && (
+                <Chip
+                  label={item.voice}
+                  variant="outlined"
+                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
+                />
+              )}
+              {item.quality && (
+                <Chip
+                  label={item.quality}
+                  variant="outlined"
+                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
+                />
+              )}
             </Box>
 
             {/* Ratings */}

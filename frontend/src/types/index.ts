@@ -8,6 +8,8 @@ export interface LibraryItem {
   added_at?: string;
   overview?: string;
   genres?: string[];
+  voice?: string;
+  quality?: string;
   seasons_count?: number;
   episodes_count?: number;
   voices?: string[];
