@@ -65,7 +65,15 @@ export const ItemPage = () => {
         <Typography color="text.primary">{item.title}</Typography>
       </Breadcrumbs>
 
-      <Paper sx={{ p: { xs: 2, md: 4 }, backgroundColor: 'background.paper', borderRadius: 1 }}>
+      <Paper
+        sx={{
+          p: { xs: 2, md: 4 },
+          backgroundColor: 'background.paper',
+          borderRadius: 2,
+          boxShadow: '0 16px 48px rgba(0,0,0,0.35)',
+          border: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
         <Grid container spacing={4}>
           {/* Poster */}
           <Grid size={{ xs: 12, md: 4 }}>
@@ -90,45 +98,67 @@ export const ItemPage = () => {
 
           {/* Info */}
           <Grid size={{ xs: 12, md: 8 }}>
-            <Typography variant="h3" component="h1" gutterBottom fontWeight={700}>
+            <Typography variant="h3" component="h1" gutterBottom fontWeight={700} sx={{ letterSpacing: -0.5 }}>
               {item.title}
             </Typography>
 
-            <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Box sx={{ mb: 3, display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
               <Chip
                 label={item.type === 'movie' ? 'Фильм' : 'Сериал'}
-                color={item.type === 'movie' ? 'primary' : 'secondary'}
-                sx={{ fontSize: '0.875rem', fontWeight: 600 }}
+                color="default"
+                sx={{
+                  fontSize: '0.8125rem',
+                  fontWeight: 700,
+                  bgcolor: 'rgba(255,255,255,0.06)',
+                  color: 'text.primary',
+                  height: 32,
+                }}
               />
               {item.kp_id > 0 && (
                 <Button
                   variant="contained"
-                  color="primary"
                   component="a"
                   href={`https://t.me/neomovies_tg_bot?start=get_${item.kp_id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  sx={{ textTransform: 'none', fontWeight: 700 }}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    bgcolor: '#e23b3b',
+                    '&:hover': { bgcolor: '#c73232' },
+                    height: 32,
+                    minHeight: 32,
+                    px: 2,
+                    lineHeight: 1,
+                  }}
                 >
                   Смотреть
                 </Button>
               )}
               {typeof item.seasons_count === 'number' && item.seasons_count > 0 && (
-                <Chip label={`${item.seasons_count} сезон(ов)`} variant="outlined" />
+                <Chip
+                  label={`${item.seasons_count} сезон(ов)`}
+                  variant="outlined"
+                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
+                />
               )}
               {typeof item.episodes_count === 'number' && item.episodes_count > 0 && (
-                <Chip label={`${item.episodes_count} эпизодов`} variant="outlined" />
+                <Chip
+                  label={`${item.episodes_count} эпизодов`}
+                  variant="outlined"
+                  sx={{ borderColor: 'rgba(255,255,255,0.2)', color: 'text.primary', height: 32 }}
+                />
               )}
             </Box>
 
             {/* Ratings */}
             {typeof item.rating === 'number' && item.rating > 0 && (
-              <Box sx={{ mb: 3, display: 'flex', gap: 3 }}>
+              <Box sx={{ mb: 3 }}>
                 <Box>
                   <Typography variant="body2" color="text.secondary">
                     Рейтинг
                   </Typography>
-                  <Typography variant="h5" fontWeight={600} color="primary.main">
+                  <Typography variant="h5" fontWeight={700} sx={{ color: '#e23b3b' }}>
                     {item.rating.toFixed(1)}
                   </Typography>
                 </Box>
@@ -143,7 +173,13 @@ export const ItemPage = () => {
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   {item.genres.map((genre) => (
-                    <Chip key={genre} label={genre} size="small" variant="outlined" />
+                    <Chip
+                      key={genre}
+                      label={genre}
+                      size="small"
+                      variant="outlined"
+                      sx={{ borderColor: 'rgba(255,255,255,0.18)', color: 'text.primary' }}
+                    />
                   ))}
                 </Box>
               </Box>
