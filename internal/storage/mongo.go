@@ -95,6 +95,63 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, qu
 	return err
 }
 
+func (m *Mongo) AppendMovieParts(ctx context.Context, kpID int, storageChatID int64, storageMessageIDs []int) error {
+	if m == nil {
+		return nil
+	}
+	if kpID <= 0 || storageChatID == 0 || len(storageMessageIDs) == 0 {
+		return nil
+	}
+	item, err := m.GetWatchItemByKPID(ctx, kpID)
+	if err != nil {
+		return err
+	}
+	if item == nil {
+		return errors.New("item not found")
+	}
+	if item.Type != "movie" {
+		return errors.New("item is not movie")
+	}
+	if item.StorageChatID != 0 && item.StorageChatID != storageChatID {
+		return errors.New("storage chat id mismatch")
+	}
+	item.StorageChatID = storageChatID
+	ids := map[int]struct{}{}
+	for _, id := range item.StorageMessageIDs {
+		if id > 0 {
+			ids[id] = struct{}{}
+		}
+	}
+	if item.StorageMessageID > 0 {
+		ids[item.StorageMessageID] = struct{}{}
+	}
+	for _, id := range storageMessageIDs {
+		if id > 0 {
+			ids[id] = struct{}{}
+		}
+	}
+	merged := make([]int, 0, len(ids))
+	for id := range ids {
+		merged = append(merged, id)
+	}
+	sort.Ints(merged)
+	item.StorageMessageIDs = merged
+	if len(merged) > 0 {
+		item.StorageMessageID = merged[0]
+	}
+	item.UpdatedAt = time.Now()
+	_, err = m.col.UpdateOne(ctx,
+		bson.M{"kp_id": kpID},
+		bson.M{"$set": bson.M{
+			"storage_chat_id":     item.StorageChatID,
+			"storage_message_id":  item.StorageMessageID,
+			"storage_message_ids": item.StorageMessageIDs,
+			"updated_at":          item.UpdatedAt,
+		}},
+	)
+	return err
+}
+
 func (m *Mongo) UpsertWatchSeries(ctx context.Context, kpID int, title string) error {
 	if m == nil {
 		return nil

@@ -646,10 +646,13 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			if item.Type == "movie" {
 				messageIDs := movieMessageIDs(item)
 				var lastCopied int
+				failed := []int{}
 				for _, mid := range messageIDs {
 					copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, mid)
 					if err == nil && copiedID > 0 {
 						lastCopied = copiedID
+					} else {
+						failed = append(failed, mid)
 					}
 				}
 				if lastCopied > 0 {
@@ -660,6 +663,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 						ChatID:      cq.Message.Chat.ID,
 						MessageID:   lastCopied,
 						ReplyMarkup: &closeKB,
+					})
+				}
+				if len(failed) > 0 {
+					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+						ChatID: cq.Message.Chat.ID,
+						Text:   fmt.Sprintf("Не удалось скопировать части: %s", joinMessageIDs(failed)),
 					})
 				}
 			} else if item.Type == "series" {
@@ -896,7 +905,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/delepisode <kp_id> <season> <episode>\n/delseason <kp_id> <season>\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id[,storage_message_id...]>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n/addmoviepart <kp_id>   (reply to forwarded channel post, append part)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/delepisode <kp_id> <season> <episode>\n/delseason <kp_id> <season>\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -952,6 +961,35 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			return
 		}
 		_ = db.UpsertWatchMovie(ctx, kpID, voice, quality, storageChatID, storageMsgIDs)
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(text, "/addmoviepart ") {
+		parts := strings.Fields(text)
+		if len(parts) != 2 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmoviepart <kp_id> (reply to forwarded post)"} )
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		if kpID <= 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid kp_id"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if msg.ReplyToMessage == nil || msg.ReplyToMessage.ForwardFromChat == nil || msg.ReplyToMessage.ForwardFromMessageID == 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Reply to a forwarded post from the storage channel."})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		storageChatID := msg.ReplyToMessage.ForwardFromChat.ID
+		storageMsgID := msg.ReplyToMessage.ForwardFromMessageID
+		if err := db.AppendMovieParts(ctx, kpID, storageChatID, []int{storageMsgID}); err != nil {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("Error: %v", err)})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
 		w.WriteHeader(http.StatusOK)
 		return
