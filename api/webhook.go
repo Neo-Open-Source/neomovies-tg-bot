@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -692,7 +693,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			if title == "" {
 				title = fmt.Sprintf("kp_%d", item.KPID)
 			}
-			text := fmt.Sprintf("%s\nСезон %d", title, seasonNum)
+			text := buildSeasonHeader(item, seasonNum)
 			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
@@ -1542,4 +1543,107 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 		MessageID:   copiedID,
 		ReplyMarkup: &kb,
 	})
+}
+
+func buildSeasonHeader(item *storage.WatchItem, seasonNum int) string {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = fmt.Sprintf("kp_%d", item.KPID)
+	}
+
+	season := findSeason(item, seasonNum)
+	if season == nil {
+		return fmt.Sprintf("%s\nСезон %d", title, seasonNum)
+	}
+
+	baseVoice := strings.TrimSpace(item.Voice)
+	baseQuality := strings.TrimSpace(item.Quality)
+
+	if baseVoice == "" {
+		baseVoice = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Voice })
+	}
+	if baseQuality == "" {
+		baseQuality = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Quality })
+	}
+
+	lines := []string{
+		fmt.Sprintf("%s\nСезон %d", title, seasonNum),
+	}
+	if baseVoice != "" {
+		lines = append(lines, baseVoice)
+	}
+	if baseQuality != "" {
+		lines = append(lines, baseQuality)
+	}
+
+	diffVoice := collectEpisodeDiffs(season, baseVoice, func(ep storage.Episode) string { return ep.Voice })
+	for _, d := range diffVoice {
+		lines = append(lines, d)
+	}
+	diffQuality := collectEpisodeDiffs(season, baseQuality, func(ep storage.Episode) string { return ep.Quality })
+	for _, d := range diffQuality {
+		lines = append(lines, d)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func mostCommonEpisodeValue(season *storage.Season, pick func(storage.Episode) string) string {
+	counts := map[string]int{}
+	for _, ep := range season.Episodes {
+		val := strings.TrimSpace(pick(ep))
+		if val == "" {
+			continue
+		}
+		counts[val]++
+	}
+	var best string
+	bestCount := 0
+	for k, v := range counts {
+		if v > bestCount {
+			bestCount = v
+			best = k
+		}
+	}
+	return best
+}
+
+func collectEpisodeDiffs(season *storage.Season, base string, pick func(storage.Episode) string) []string {
+	base = strings.TrimSpace(base)
+	if season == nil {
+		return nil
+	}
+	byVal := map[string][]int{}
+	for _, ep := range season.Episodes {
+		val := strings.TrimSpace(pick(ep))
+		if val == "" || val == base {
+			continue
+		}
+		byVal[val] = append(byVal[val], ep.Number)
+	}
+	if len(byVal) == 0 {
+		return nil
+	}
+	lines := []string{}
+	for val, eps := range byVal {
+		sort.Ints(eps)
+		lines = append(lines, fmt.Sprintf("* (%s %s - %s)", formatEpisodeList(eps), seriesWord(len(eps)), val))
+	}
+	sort.Strings(lines)
+	return lines
+}
+
+func formatEpisodeList(nums []int) string {
+	parts := make([]string, 0, len(nums))
+	for _, n := range nums {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return strings.Join(parts, ",")
+}
+
+func seriesWord(count int) string {
+	if count == 1 {
+		return "серия"
+	}
+	return "серии"
 }
