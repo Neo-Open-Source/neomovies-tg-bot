@@ -644,14 +644,21 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 
 		if cq.Message != nil {
 			if item.Type == "movie" {
-				copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, item.StorageMessageID)
-				if err == nil && copiedID > 0 {
+				messageIDs := movieMessageIDs(item)
+				var lastCopied int
+				for _, mid := range messageIDs {
+					copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, mid)
+					if err == nil && copiedID > 0 {
+						lastCopied = copiedID
+					}
+				}
+				if lastCopied > 0 {
 					closeKB := tg.NewInlineKeyboardMarkup([][]tg.InlineKeyboardButton{
 						{{Text: "Закрыть", CallbackData: "close"}},
 					})
 					_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
 						ChatID:      cq.Message.Chat.ID,
-						MessageID:   copiedID,
+						MessageID:   lastCopied,
 						ReplyMarkup: &closeKB,
 					})
 				}
@@ -918,7 +925,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	if strings.HasPrefix(text, "/addmovie ") {
 		parts := strings.Fields(text)
 		if len(parts) != 4 && len(parts) != 6 {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id> OR reply to forwarded post: /addmovie <kp_id> <voice> <quality>"})
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id[,storage_message_id...]> OR reply to forwarded post: /addmovie <kp_id> <voice> <quality>"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -926,10 +933,10 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		voice := strings.TrimSpace(parts[2])
 		quality := strings.TrimSpace(parts[3])
 		var storageChatID int64
-		var storageMsgID int
+		var storageMsgIDs []int
 		if len(parts) == 6 {
 			storageChatID, _ = strconv.ParseInt(parts[4], 10, 64)
-			storageMsgID, _ = strconv.Atoi(parts[5])
+			storageMsgIDs = parseMessageIDList(parts[5])
 		} else {
 			if msg.ReplyToMessage == nil || msg.ReplyToMessage.ForwardFromChat == nil || msg.ReplyToMessage.ForwardFromMessageID == 0 {
 				_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Reply to a forwarded post from the storage channel."})
@@ -937,14 +944,14 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 				return
 			}
 			storageChatID = msg.ReplyToMessage.ForwardFromChat.ID
-			storageMsgID = msg.ReplyToMessage.ForwardFromMessageID
+			storageMsgIDs = []int{msg.ReplyToMessage.ForwardFromMessageID}
 		}
-		if kpID <= 0 || voice == "" || quality == "" || storageChatID == 0 || storageMsgID <= 0 {
+		if kpID <= 0 || voice == "" || quality == "" || storageChatID == 0 || len(storageMsgIDs) == 0 {
 			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid args"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = db.UpsertWatchMovie(ctx, kpID, voice, quality, storageChatID, storageMsgID)
+		_ = db.UpsertWatchMovie(ctx, kpID, voice, quality, storageChatID, storageMsgIDs)
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
 		w.WriteHeader(http.StatusOK)
 		return
@@ -1024,7 +1031,11 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		textOut := fmt.Sprintf("kp_id=%d\ntype=%s\ntitle=%s\nmovie_ref=%d:%d\nseasons=%d", item.KPID, item.Type, item.Title, item.StorageChatID, item.StorageMessageID, len(item.Seasons))
+		ref := fmt.Sprintf("%d:%d", item.StorageChatID, item.StorageMessageID)
+		if len(item.StorageMessageIDs) > 0 {
+			ref = fmt.Sprintf("%d:%s", item.StorageChatID, joinMessageIDs(item.StorageMessageIDs))
+		}
+		textOut := fmt.Sprintf("kp_id=%d\ntype=%s\ntitle=%s\nmovie_ref=%s\nseasons=%d", item.KPID, item.Type, item.Title, ref, len(item.Seasons))
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: textOut})
 		w.WriteHeader(http.StatusOK)
 		return
@@ -1646,4 +1657,48 @@ func seriesWord(count int) string {
 		return "серия"
 	}
 	return "серии"
+}
+
+func parseMessageIDList(raw string) []int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		id, _ := strconv.Atoi(p)
+		if id > 0 {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func joinMessageIDs(ids []int) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.Itoa(id))
+	}
+	return strings.Join(parts, ",")
+}
+
+func movieMessageIDs(item *storage.WatchItem) []int {
+	if item == nil {
+		return nil
+	}
+	if len(item.StorageMessageIDs) > 0 {
+		return item.StorageMessageIDs
+	}
+	if item.StorageMessageID > 0 {
+		return []int{item.StorageMessageID}
+	}
+	return nil
 }

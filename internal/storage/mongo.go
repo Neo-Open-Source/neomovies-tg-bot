@@ -26,6 +26,7 @@ type WatchItem struct {
 	Quality          string             `bson:"quality,omitempty"`
 	StorageChatID    int64              `bson:"storage_chat_id,omitempty"`
 	StorageMessageID int                `bson:"storage_message_id,omitempty"`
+	StorageMessageIDs []int             `bson:"storage_message_ids,omitempty"`
 	Seasons          []Season           `bson:"seasons,omitempty"`
 	UpdatedAt        time.Time          `bson:"updated_at"`
 }
@@ -69,9 +70,13 @@ func (m *Mongo) GetWatchItemByKPID(ctx context.Context, kpID int) (*WatchItem, e
 	return &item, err
 }
 
-func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, quality string, storageChatID int64, storageMessageID int) error {
+func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, quality string, storageChatID int64, storageMessageIDs []int) error {
 	if m == nil {
 		return nil
+	}
+	storageMessageID := 0
+	if len(storageMessageIDs) > 0 {
+		storageMessageID = storageMessageIDs[0]
 	}
 	_, err := m.col.UpdateOne(ctx,
 		bson.M{"kp_id": kpID},
@@ -82,6 +87,7 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, qu
 			"quality":            quality,
 			"storage_chat_id":    storageChatID,
 			"storage_message_id": storageMessageID,
+			"storage_message_ids": storageMessageIDs,
 			"updated_at":         time.Now(),
 		}},
 		options.Update().SetUpsert(true),
