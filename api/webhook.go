@@ -665,6 +665,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 						ReplyMarkup: &closeKB,
 					})
 				}
+				if len(messageIDs) > 1 {
+					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+						ChatID: cq.Message.Chat.ID,
+						Text:   fmt.Sprintf("Части: %s (отправлено=%d, ошибок=%d)", joinMessageIDs(messageIDs), len(messageIDs)-len(failed), len(failed)),
+					})
+				}
 				if len(failed) > 0 {
 					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
 						ChatID: cq.Message.Chat.ID,
@@ -1733,7 +1739,9 @@ func movieMessageIDs(item *storage.WatchItem) []int {
 		return nil
 	}
 	if len(item.StorageMessageIDs) > 0 {
-		return item.StorageMessageIDs
+		ids := append([]int(nil), item.StorageMessageIDs...)
+		sort.Ints(ids)
+		return ids
 	}
 	if item.StorageMessageID > 0 {
 		return []int{item.StorageMessageID}
