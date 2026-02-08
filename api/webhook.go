@@ -749,6 +749,8 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		// Ack immediately to avoid timeout on large series.
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 
 		if cq.Message != nil {
 			if item.Type == "movie" {
@@ -798,22 +800,24 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 				voices := collectSeriesVoices(item)
 				if len(voices) > 1 {
 					kb := buildSeriesVoiceKeyboard(item.KPID, voices)
-					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+					if err := bot.SendMessage(ctx, tg.SendMessageRequest{
 						ChatID:      cq.Message.Chat.ID,
 						Text:        "Выбери озвучку",
 						ReplyMarkup: &kb,
-					})
+					}); err != nil {
+						log.Printf("series menu send error: %v (kp_id=%d)", err, kpID)
+					}
 				} else {
 					title := strings.TrimSpace(item.Title)
 					if title == "" {
 						title = fmt.Sprintf("kp_%d", item.KPID)
 					}
-					_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: cq.Message.Chat.ID, Text: title, ReplyMarkup: item.SeriesKeyboard()})
+					if err := bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: cq.Message.Chat.ID, Text: title, ReplyMarkup: item.SeriesKeyboard()}); err != nil {
+						log.Printf("series menu send error: %v (kp_id=%d)", err, kpID)
+					}
 				}
 			}
 		}
-
-		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
