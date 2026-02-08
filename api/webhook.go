@@ -56,6 +56,14 @@ type callbackQuery struct {
 	InlineMessageID string   `json:"inline_message_id"`
 }
 
+type autoSeriesState struct {
+	KPID      int
+	StartedAt time.Time
+}
+
+var autoSeriesMu sync.Mutex
+var autoSeriesByChat = map[int64]autoSeriesState{}
+
 type chat struct {
 	ID int64 `json:"id"`
 }
@@ -64,6 +72,7 @@ type message struct {
 	MessageID            int      `json:"message_id"`
 	Chat                 chat     `json:"chat"`
 	Text                 string   `json:"text"`
+	Caption              string   `json:"caption"`
 	From                 *user    `json:"from"`
 	ReplyToMessage       *message `json:"reply_to_message"`
 	ForwardFromChat      *chat    `json:"forward_from_chat"`
@@ -941,6 +950,11 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		return
 	}
 
+	if handled := handleAutoEpisode(ctx, bot, db, msg); handled {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	if text == "/help" || text == "help" {
 		adminChatIDStr := strings.TrimSpace(os.Getenv("ADMIN_CHAT_ID"))
 		if adminChatIDStr == "" {
@@ -959,7 +973,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id[,storage_message_id...]>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n/addmoviepart <kp_id>   (reply to forwarded channel post, append part)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/delepisode <kp_id> <season> <episode>\n/delseason <kp_id> <season>\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "/help\n\n/addmovie <kp_id> <voice> <quality> <storage_chat_id> <storage_message_id[,storage_message_id...]>\n/addmovie <kp_id> <voice> <quality>   (reply to forwarded channel post)\n/addmoviepart <kp_id>   (reply to forwarded channel post, append part)\n\n/addseries <kp_id> <title>\n\n/addepisode <kp_id> <season> <episode> <voice> <quality> <storage_chat_id> <storage_message_id>\n/addepisode <kp_id> <season> <episode> <voice> <quality>   (reply to forwarded channel post)\n\n/autoaddepisodes <kp_id>\n/autostop\n\n/delepisode <kp_id> <season> <episode>\n/delseason <kp_id> <season>\n\n/getinfo <kp_id>\n/del <kp_id>\n/list [limit]"})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -1016,6 +1030,34 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 		}
 		_ = db.UpsertWatchMovie(ctx, kpID, voice, quality, storageChatID, storageMsgIDs)
 		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK"})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(text, "/autoaddepisodes ") {
+		parts := strings.Fields(text)
+		if len(parts) != 2 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /autoaddepisodes <kp_id>"} )
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		if kpID <= 0 {
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Invalid kp_id"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		autoSeriesMu.Lock()
+		autoSeriesByChat[msg.Chat.ID] = autoSeriesState{KPID: kpID, StartedAt: time.Now()}
+		autoSeriesMu.Unlock()
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("OK. Автодобавление включено для kp_id=%d. Пересылай посты с видео.", kpID)})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if text == "/autostop" || text == "/autoaddepisodes stop" {
+		autoSeriesMu.Lock()
+		delete(autoSeriesByChat, msg.Chat.ID)
+		autoSeriesMu.Unlock()
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "OK. Автодобавление выключено."})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -1222,6 +1264,90 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func handleAutoEpisode(ctx context.Context, bot *tg.Client, db *storage.Mongo, msg *message) bool {
+	if db == nil {
+		return false
+	}
+	autoSeriesMu.Lock()
+	state, ok := autoSeriesByChat[msg.Chat.ID]
+	autoSeriesMu.Unlock()
+	if !ok {
+		return false
+	}
+
+	if msg.ReplyToMessage != nil {
+		// don't intercept replies
+		return false
+	}
+	if msg.ForwardFromChat == nil || msg.ForwardFromMessageID == 0 {
+		return false
+	}
+
+	caption := strings.TrimSpace(firstNonEmpty(msg.Caption, msg.Text))
+	if caption == "" {
+		return false
+	}
+	season, episode, voice, quality := parseEpisodeCaption(caption)
+	if season <= 0 || episode <= 0 {
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Не удалось распознать сезон/серию из подписи."})
+		return true
+	}
+	if voice == "" {
+		voice = "Unknown"
+	}
+	if quality == "" {
+		quality = "Unknown"
+	}
+
+	err := db.UpsertSeriesEpisode(ctx, state.KPID, season, episode, voice, quality, msg.ForwardFromChat.ID, msg.ForwardFromMessageID)
+	if err != nil {
+		_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("Ошибка добавления: %v", err)})
+		return true
+	}
+	_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: fmt.Sprintf("OK: S%dE%d, %s, %s", season, episode, voice, quality)})
+	return true
+}
+
+func parseEpisodeCaption(caption string) (season int, episode int, voice string, quality string) {
+	c := strings.TrimSpace(caption)
+	reSeason := regexp.MustCompile(`(?i)сезон\s*(\d{1,2})`)
+	reEpisode := regexp.MustCompile(`(?i)серия\s*(\d{1,3})`)
+	if m := reSeason.FindStringSubmatch(c); len(m) == 2 {
+		season, _ = strconv.Atoi(m[1])
+	}
+	if m := reEpisode.FindStringSubmatch(c); len(m) == 2 {
+		episode, _ = strconv.Atoi(m[1])
+	}
+
+	reParens := regexp.MustCompile(`\(([^)]+)\)`)
+	if m := reParens.FindStringSubmatch(c); len(m) == 2 {
+		parts := strings.Split(m[1], ",")
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if strings.Contains(strings.ToLower(p), "p") && strings.ContainsAny(p, "0123456789") {
+				quality = p
+				continue
+			}
+			if voice == "" {
+				voice = p
+			}
+		}
+	}
+
+	// Also try to detect quality outside parentheses
+	if quality == "" {
+		reQuality := regexp.MustCompile(`(?i)\b(\d{3,4}p)\b`)
+		if m := reQuality.FindStringSubmatch(c); len(m) == 2 {
+			quality = m[1]
+		}
+	}
+
+	return
 }
 
 var iframeSrcRe = regexp.MustCompile(`(?i)src=\"([^\"]+)\"`)
