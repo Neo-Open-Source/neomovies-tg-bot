@@ -19,17 +19,17 @@ type Mongo struct {
 }
 
 type WatchItem struct {
-	ID               primitive.ObjectID `bson:"_id,omitempty"`
-	KPID             int                `bson:"kp_id"`
-	Type             string             `bson:"type"`
-	Title            string             `bson:"title,omitempty"`
-	Voice            string             `bson:"voice,omitempty"`
-	Quality          string             `bson:"quality,omitempty"`
-	StorageChatID    int64              `bson:"storage_chat_id,omitempty"`
-	StorageMessageID int                `bson:"storage_message_id,omitempty"`
-	StorageMessageIDs []int             `bson:"storage_message_ids,omitempty"`
-	Seasons          []Season           `bson:"seasons,omitempty"`
-	UpdatedAt        time.Time          `bson:"updated_at"`
+	ID                primitive.ObjectID `bson:"_id,omitempty"`
+	KPID              int                `bson:"kp_id"`
+	Type              string             `bson:"type"`
+	Title             string             `bson:"title,omitempty"`
+	Voice             string             `bson:"voice,omitempty"`
+	Quality           string             `bson:"quality,omitempty"`
+	StorageChatID     int64              `bson:"storage_chat_id,omitempty"`
+	StorageMessageID  int                `bson:"storage_message_id,omitempty"`
+	StorageMessageIDs []int              `bson:"storage_message_ids,omitempty"`
+	Seasons           []Season           `bson:"seasons,omitempty"`
+	UpdatedAt         time.Time          `bson:"updated_at"`
 }
 
 type Season struct {
@@ -90,14 +90,14 @@ func (m *Mongo) UpsertWatchMovie(ctx context.Context, kpID int, voice string, qu
 	_, err := m.col.UpdateOne(ctx,
 		bson.M{"kp_id": kpID},
 		bson.M{"$set": bson.M{
-			"kp_id":              kpID,
-			"type":               "movie",
-			"voice":              voice,
-			"quality":            quality,
-			"storage_chat_id":    storageChatID,
-			"storage_message_id": storageMessageID,
+			"kp_id":               kpID,
+			"type":                "movie",
+			"voice":               voice,
+			"quality":             quality,
+			"storage_chat_id":     storageChatID,
+			"storage_message_id":  storageMessageID,
 			"storage_message_ids": storageMessageIDs,
-			"updated_at":         time.Now(),
+			"updated_at":          time.Now(),
 		}},
 		options.Update().SetUpsert(true),
 	)

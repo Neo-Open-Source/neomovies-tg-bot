@@ -146,30 +146,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 type libraryItem struct {
-	KPID          int      `json:"kp_id"`
-	Type          string   `json:"type"`
-	Title         string   `json:"title"`
-	PosterURL     string   `json:"poster_url"`
-	Rating        float64  `json:"rating"`
-	Overview      string   `json:"overview"`
-	Genres        []string `json:"genres,omitempty"`
-	Voice         string   `json:"voice,omitempty"`
-	Quality       string   `json:"quality,omitempty"`
+	KPID          int             `json:"kp_id"`
+	Type          string          `json:"type"`
+	Title         string          `json:"title"`
+	PosterURL     string          `json:"poster_url"`
+	Rating        float64         `json:"rating"`
+	Overview      string          `json:"overview"`
+	Genres        []string        `json:"genres,omitempty"`
+	Voice         string          `json:"voice,omitempty"`
+	Quality       string          `json:"quality,omitempty"`
 	Seasons       []librarySeason `json:"seasons,omitempty"`
-	SeasonsCount  int      `json:"seasons_count,omitempty"`
-	EpisodesCount int      `json:"episodes_count,omitempty"`
-	Voices        []string `json:"voices,omitempty"`
+	SeasonsCount  int             `json:"seasons_count,omitempty"`
+	EpisodesCount int             `json:"episodes_count,omitempty"`
+	Voices        []string        `json:"voices,omitempty"`
 }
 
 type librarySeason struct {
-	Number   int             `json:"number"`
+	Number   int              `json:"number"`
 	Episodes []libraryEpisode `json:"episodes,omitempty"`
 }
 
 type libraryEpisode struct {
-	Number  int    `json:"number"`
-	Voice   string `json:"voice,omitempty"`
-	Quality string `json:"quality,omitempty"`
+	Number   int                     `json:"number"`
+	Voice    string                  `json:"voice,omitempty"`
+	Quality  string                  `json:"quality,omitempty"`
 	Variants []libraryEpisodeVariant `json:"variants,omitempty"`
 }
 
@@ -704,11 +704,21 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 					})
 				}
 			} else if item.Type == "series" {
-				title := strings.TrimSpace(item.Title)
-				if title == "" {
-					title = fmt.Sprintf("kp_%d", item.KPID)
+				voices := collectSeriesVoices(item)
+				if len(voices) > 1 {
+					kb := buildSeriesVoiceKeyboard(item.KPID, voices)
+					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
+						ChatID:      cq.Message.Chat.ID,
+						Text:        "Выбери озвучку",
+						ReplyMarkup: &kb,
+					})
+				} else {
+					title := strings.TrimSpace(item.Title)
+					if title == "" {
+						title = fmt.Sprintf("kp_%d", item.KPID)
+					}
+					_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: cq.Message.Chat.ID, Text: title, ReplyMarkup: item.SeriesKeyboard()})
 				}
-				_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: cq.Message.Chat.ID, Text: title, ReplyMarkup: item.SeriesKeyboard()})
 			}
 		}
 
@@ -718,13 +728,19 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	}
 	if strings.HasPrefix(data, "season:") {
 		parts := strings.Split(data, ":")
-		if len(parts) != 3 {
+		if len(parts) != 3 && len(parts) != 4 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
+		voice := ""
+		if len(parts) == 4 && parts[3] != "" {
+			if v, err := url.QueryUnescape(parts[3]); err == nil {
+				voice = v
+			}
+		}
 		if kpID <= 0 || seasonNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -737,19 +753,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		if cq.Message != nil {
-			baseVoice := strings.TrimSpace(item.Voice)
-			if baseVoice == "" {
-				season := findSeason(item, seasonNum)
-				if season != nil {
-					baseVoice = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Voice })
-				}
-			}
-			text := buildSeasonHeader(item, seasonNum)
+			text := buildSeasonHeader(item, seasonNum, voice)
 			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
 				Text:        text,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, baseVoice),
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, voice),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -794,24 +803,19 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if strings.HasPrefix(data, "seasonvoice:") {
+	if strings.HasPrefix(data, "seriesvoice:") {
 		parts := strings.Split(data, ":")
-		if len(parts) != 4 {
+		if len(parts) != 3 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		kpID, _ := strconv.Atoi(parts[1])
-		seasonNum, _ := strconv.Atoi(parts[2])
-		voice := strings.TrimSpace(parts[3])
+		voice, _ := url.QueryUnescape(parts[2])
 		if voice == "all" {
 			voice = ""
-		} else {
-			if v, err := url.QueryUnescape(voice); err == nil {
-				voice = v
-			}
 		}
-		if kpID <= 0 || seasonNum <= 0 {
+		if kpID <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
@@ -823,10 +827,15 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		if cq.Message != nil {
-			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
+			title := strings.TrimSpace(item.Title)
+			if title == "" {
+				title = fmt.Sprintf("kp_%d", item.KPID)
+			}
+			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, voice),
+				Text:        title,
+				ReplyMarkup: item.SeriesKeyboardWithVoice(voice),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -1099,7 +1108,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	if strings.HasPrefix(text, "/autoaddepisodes ") {
 		parts := strings.Fields(text)
 		if len(parts) != 2 {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /autoaddepisodes <kp_id>"} )
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /autoaddepisodes <kp_id>"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -1127,7 +1136,7 @@ func handleMessage(ctx context.Context, w http.ResponseWriter, bot *tg.Client, m
 	if strings.HasPrefix(text, "/addmoviepart ") {
 		parts := strings.Fields(text)
 		if len(parts) != 2 {
-			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmoviepart <kp_id> (reply to forwarded post)"} )
+			_ = bot.SendMessage(ctx, tg.SendMessageRequest{ChatID: msg.Chat.ID, Text: "Usage: /addmoviepart <kp_id> (reply to forwarded post)"})
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -1880,7 +1889,7 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 	})
 }
 
-func buildSeasonHeader(item *storage.WatchItem, seasonNum int) string {
+func buildSeasonHeader(item *storage.WatchItem, seasonNum int, voice string) string {
 	title := strings.TrimSpace(item.Title)
 	if title == "" {
 		title = fmt.Sprintf("kp_%d", item.KPID)
@@ -1891,14 +1900,13 @@ func buildSeasonHeader(item *storage.WatchItem, seasonNum int) string {
 		return fmt.Sprintf("%s\nСезон %d", title, seasonNum)
 	}
 
-	baseVoice := strings.TrimSpace(item.Voice)
-	baseQuality := strings.TrimSpace(item.Quality)
-
+	baseVoice := strings.TrimSpace(voice)
+	baseQuality := ""
 	if baseVoice == "" {
-		baseVoice = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Voice })
+		baseVoice = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Voice }, "voice")
 	}
 	if baseQuality == "" {
-		baseQuality = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Quality })
+		baseQuality = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Quality }, "quality")
 	}
 
 	lines := []string{
@@ -1911,11 +1919,11 @@ func buildSeasonHeader(item *storage.WatchItem, seasonNum int) string {
 		lines = append(lines, baseQuality)
 	}
 
-	diffVoice := collectEpisodeDiffs(season, baseVoice, func(ep storage.Episode) string { return ep.Voice })
+	diffVoice := collectEpisodeDiffs(season, baseVoice, "voice")
 	for _, d := range diffVoice {
 		lines = append(lines, d)
 	}
-	diffQuality := collectEpisodeDiffs(season, baseQuality, func(ep storage.Episode) string { return ep.Quality })
+	diffQuality := collectEpisodeDiffs(season, baseQuality, "quality")
 	for _, d := range diffQuality {
 		lines = append(lines, d)
 	}
@@ -1923,9 +1931,24 @@ func buildSeasonHeader(item *storage.WatchItem, seasonNum int) string {
 	return strings.Join(lines, "\n")
 }
 
-func mostCommonEpisodeValue(season *storage.Season, pick func(storage.Episode) string) string {
+func mostCommonEpisodeValue(season *storage.Season, pick func(storage.Episode) string, kind string) string {
 	counts := map[string]int{}
 	for _, ep := range season.Episodes {
+		if len(ep.Variants) > 0 {
+			for _, v := range ep.Variants {
+				val := ""
+				if kind == "voice" {
+					val = strings.TrimSpace(v.Voice)
+				} else {
+					val = strings.TrimSpace(v.Quality)
+				}
+				if val == "" {
+					continue
+				}
+				counts[val]++
+			}
+			continue
+		}
 		val := strings.TrimSpace(pick(ep))
 		if val == "" {
 			continue
@@ -1943,15 +1966,48 @@ func mostCommonEpisodeValue(season *storage.Season, pick func(storage.Episode) s
 	return best
 }
 
-func collectEpisodeDiffs(season *storage.Season, base string, pick func(storage.Episode) string) []string {
+func collectEpisodeDiffs(season *storage.Season, base string, kind string) []string {
 	base = strings.TrimSpace(base)
 	if season == nil {
 		return nil
 	}
 	byVal := map[string][]int{}
 	for _, ep := range season.Episodes {
-		val := strings.TrimSpace(pick(ep))
-		if val == "" || val == base {
+		if len(ep.Variants) > 0 {
+			// If any variant matches base, treat as base
+			hasBase := false
+			altVals := []string{}
+			for _, v := range ep.Variants {
+				val := ""
+				if kind == "voice" {
+					val = strings.TrimSpace(v.Voice)
+				} else {
+					val = strings.TrimSpace(v.Quality)
+				}
+				if val == "" {
+					continue
+				}
+				if strings.EqualFold(val, base) {
+					hasBase = true
+				} else {
+					altVals = append(altVals, val)
+				}
+			}
+			if hasBase || len(altVals) == 0 {
+				continue
+			}
+			// Use first alt value as label
+			val := altVals[0]
+			byVal[val] = append(byVal[val], ep.Number)
+			continue
+		}
+		val := ""
+		if kind == "voice" {
+			val = strings.TrimSpace(ep.Voice)
+		} else {
+			val = strings.TrimSpace(ep.Quality)
+		}
+		if val == "" || strings.EqualFold(val, base) {
 			continue
 		}
 		byVal[val] = append(byVal[val], ep.Number)
@@ -1966,6 +2022,68 @@ func collectEpisodeDiffs(season *storage.Season, base string, pick func(storage.
 	}
 	sort.Strings(lines)
 	return lines
+}
+
+func collectSeriesVoices(item *storage.WatchItem) []string {
+	if item == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, s := range item.Seasons {
+		for _, ep := range s.Episodes {
+			if len(ep.Variants) > 0 {
+				for _, v := range ep.Variants {
+					name := strings.TrimSpace(v.Voice)
+					if name == "" {
+						continue
+					}
+					key := strings.ToLower(name)
+					if _, ok := seen[key]; ok {
+						continue
+					}
+					seen[key] = struct{}{}
+					out = append(out, name)
+				}
+			} else {
+				name := strings.TrimSpace(ep.Voice)
+				if name == "" {
+					continue
+				}
+				key := strings.ToLower(name)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func buildSeriesVoiceKeyboard(kpID int, voices []string) tg.InlineKeyboardMarkup {
+	rows := [][]tg.InlineKeyboardButton{}
+	row := []tg.InlineKeyboardButton{
+		{Text: "Все", CallbackData: fmt.Sprintf("seriesvoice:%d:all", kpID)},
+	}
+	for _, v := range voices {
+		btn := tg.InlineKeyboardButton{
+			Text:         v,
+			CallbackData: fmt.Sprintf("seriesvoice:%d:%s", kpID, url.QueryEscape(v)),
+		}
+		if len(row) == 3 {
+			rows = append(rows, row)
+			row = []tg.InlineKeyboardButton{}
+		}
+		row = append(row, btn)
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+	return tg.NewInlineKeyboardMarkup(rows)
 }
 
 func formatEpisodeList(nums []int) string {
