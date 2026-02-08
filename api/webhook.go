@@ -64,6 +64,9 @@ type autoSeriesState struct {
 var autoSeriesMu sync.Mutex
 var autoSeriesByChat = map[int64]autoSeriesState{}
 
+var closeMu sync.Mutex
+var closeTargetsByChat = map[int64]map[int][]int{}
+
 type chat struct {
 	ID int64 `json:"id"`
 }
@@ -623,7 +626,19 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	data := strings.TrimSpace(cq.Data)
 	if data == "close" {
 		if cq.Message != nil {
-			_ = bot.DeleteMessage(ctx, cq.Message.Chat.ID, cq.Message.MessageID)
+			chatID := cq.Message.Chat.ID
+			msgID := cq.Message.MessageID
+			closeMu.Lock()
+			targets := closeTargetsByChat[chatID][msgID]
+			delete(closeTargetsByChat[chatID], msgID)
+			closeMu.Unlock()
+			if len(targets) > 0 {
+				for _, id := range targets {
+					_ = bot.DeleteMessage(ctx, chatID, id)
+				}
+			} else {
+				_ = bot.DeleteMessage(ctx, chatID, msgID)
+			}
 		} else if cq.InlineMessageID != "" {
 			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{InlineMessageID: cq.InlineMessageID, ReplyMarkup: &tg.InlineKeyboardMarkup{InlineKeyboard: [][]tg.InlineKeyboardButton{}}})
 		}
@@ -675,11 +690,13 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			if item.Type == "movie" {
 				messageIDs := movieMessageIDs(item)
 				var lastCopied int
+				copiedIDs := []int{}
 				failed := []int{}
 				for _, mid := range messageIDs {
 					copiedID, err := bot.CopyMessage(ctx, cq.Message.Chat.ID, item.StorageChatID, mid)
 					if err == nil && copiedID > 0 {
 						lastCopied = copiedID
+						copiedIDs = append(copiedIDs, copiedID)
 						log.Printf("copy movie part ok kp_id=%d mid=%d new_id=%d", item.KPID, mid, copiedID)
 					} else {
 						log.Printf("copy movie part error kp_id=%d mid=%d err=%v", item.KPID, mid, err)
@@ -696,6 +713,16 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 						MessageID:   lastCopied,
 						ReplyMarkup: &closeKB,
 					})
+					if len(copiedIDs) > 0 {
+						closeMu.Lock()
+						m, ok := closeTargetsByChat[cq.Message.Chat.ID]
+						if !ok {
+							m = map[int][]int{}
+							closeTargetsByChat[cq.Message.Chat.ID] = m
+						}
+						m[lastCopied] = copiedIDs
+						closeMu.Unlock()
+					}
 				}
 				if len(failed) > 0 {
 					_ = bot.SendMessage(ctx, tg.SendMessageRequest{
@@ -922,7 +949,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	}
 	if strings.HasPrefix(data, "epnav:") {
 		parts := strings.Split(data, ":")
-		if len(parts) != 5 {
+		if len(parts) != 5 && len(parts) != 6 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
@@ -931,6 +958,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		seasonNum, _ := strconv.Atoi(parts[2])
 		epNum, _ := strconv.Atoi(parts[3])
 		dir, _ := strconv.Atoi(parts[4])
+		voice := ""
+		if len(parts) == 6 && parts[5] != "" {
+			if v, err := url.QueryUnescape(parts[5]); err == nil {
+				voice = v
+			}
+		}
 		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 || (dir != -1 && dir != 1) {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -954,7 +987,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		nextEp := epNum + dir
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp, ""); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp, voice); err != nil {
 			log.Printf("episode nav error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, nextEp)
 		} else if msgID != 0 {
 			_ = bot.DeleteMessage(ctx, chatID, msgID)
@@ -1905,10 +1938,18 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 	if hasPrev || hasNext {
 		nav := []tg.InlineKeyboardButton{}
 		if hasPrev {
-			nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1", item.KPID, seasonNum, epNum)})
+			if voice != "" {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1:%s", item.KPID, seasonNum, epNum, url.QueryEscape(voice))})
+			} else {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1", item.KPID, seasonNum, epNum)})
+			}
 		}
 		if hasNext {
-			nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1", item.KPID, seasonNum, epNum)})
+			if voice != "" {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1:%s", item.KPID, seasonNum, epNum, url.QueryEscape(voice))})
+			} else {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1", item.KPID, seasonNum, epNum)})
+			}
 		}
 		rows = append(rows, nav)
 	}
