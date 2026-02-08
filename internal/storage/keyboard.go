@@ -30,7 +30,10 @@ func (w *WatchItem) SeriesKeyboardWithVoice(voice string) *tg.InlineKeyboardMark
 		}
 		rows = append(rows, []tg.InlineKeyboardButton{{Text: fmt.Sprintf("%d сезон", s.Number), CallbackData: cb}})
 	}
-	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+	rows = append(rows, []tg.InlineKeyboardButton{
+		{Text: "Назад", CallbackData: fmt.Sprintf("seriesvoices:%d", w.KPID)},
+		{Text: "Закрыть", CallbackData: "close"},
+	})
 	kb := tg.NewInlineKeyboardMarkup(rows)
 	return &kb
 }
@@ -126,7 +129,17 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 		}
 	}
 
-	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+	if voiceKey != "" {
+		rows = append(rows, []tg.InlineKeyboardButton{
+			{Text: "Назад", CallbackData: fmt.Sprintf("seriesvoice:%d:%s", w.KPID, voiceKey)},
+			{Text: "Закрыть", CallbackData: "close"},
+		})
+	} else {
+		rows = append(rows, []tg.InlineKeyboardButton{
+			{Text: "Назад", CallbackData: fmt.Sprintf("watch:%d", w.KPID)},
+			{Text: "Закрыть", CallbackData: "close"},
+		})
+	}
 	kb := tg.NewInlineKeyboardMarkup(rows)
 	return &kb
 }

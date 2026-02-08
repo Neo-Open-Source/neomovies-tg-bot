@@ -842,6 +842,39 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if strings.HasPrefix(data, "seriesvoices:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 2 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		if kpID <= 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		item, _ := db.GetWatchItemByKPID(ctx, kpID)
+		if item == nil {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if cq.Message != nil {
+			voices := collectSeriesVoices(item)
+			kb := buildSeriesVoiceKeyboard(item.KPID, voices)
+			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
+				ChatID:      cq.Message.Chat.ID,
+				MessageID:   cq.Message.MessageID,
+				Text:        "Выбери озвучку",
+				ReplyMarkup: &kb,
+			})
+		}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if strings.HasPrefix(data, "ep:") {
 		parts := strings.Split(data, ":")
 		if len(parts) != 4 && len(parts) != 5 {
