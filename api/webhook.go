@@ -831,10 +831,9 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
 		voice := ""
+		voiceIdx := -1
 		if len(parts) == 4 && parts[3] != "" {
-			if v, err := url.QueryUnescape(parts[3]); err == nil {
-				voice = v
-			}
+			voiceIdx, _ = strconv.Atoi(parts[3])
 		}
 		if kpID <= 0 || seasonNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -847,13 +846,16 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if voiceIdx >= 0 {
+			voice = voiceByIndex(item, voiceIdx)
+		}
 		if cq.Message != nil {
 			text := buildSeasonHeader(item, seasonNum, voice)
 			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
 				Text:        text,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, voice),
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, voice, voiceIdx),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -871,10 +873,9 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		seasonNum, _ := strconv.Atoi(parts[2])
 		pageNum, _ := strconv.Atoi(parts[3])
 		voice := ""
+		voiceIdx := -1
 		if len(parts) == 5 && parts[4] != "" {
-			if v, err := url.QueryUnescape(parts[4]); err == nil {
-				voice = v
-			}
+			voiceIdx, _ = strconv.Atoi(parts[4])
 		}
 		if kpID <= 0 || seasonNum <= 0 || pageNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -887,11 +888,14 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if voiceIdx >= 0 {
+			voice = voiceByIndex(item, voiceIdx)
+		}
 		if cq.Message != nil {
 			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, pageNum, voice),
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, pageNum, voice, voiceIdx),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -906,10 +910,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		kpID, _ := strconv.Atoi(parts[1])
-		voice, _ := url.QueryUnescape(parts[2])
-		if voice == "all" {
-			voice = ""
-		}
+		voiceIdx, _ := strconv.Atoi(parts[2])
 		if kpID <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -921,6 +922,10 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		voice := ""
+		if voiceIdx >= 0 {
+			voice = voiceByIndex(item, voiceIdx)
+		}
 		if cq.Message != nil {
 			title := strings.TrimSpace(item.Title)
 			if title == "" {
@@ -930,7 +935,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
 				Text:        title,
-				ReplyMarkup: item.SeriesKeyboardWithVoice(voice),
+				ReplyMarkup: item.SeriesKeyboardWithVoice(voice, voiceIdx),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -980,12 +985,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
 		epNum, _ := strconv.Atoi(parts[3])
-		voice := ""
+		voiceIdx := -1
 		if len(parts) == 5 && parts[4] != "" {
 			if parts[4] == "select" {
-				voice = ""
-			} else if v, err := url.QueryUnescape(parts[4]); err == nil {
-				voice = v
+				voiceIdx = -1
+			} else {
+				voiceIdx, _ = strconv.Atoi(parts[4])
 			}
 		}
 		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 {
@@ -1008,7 +1013,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, voice); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, voiceIdx, -1); err != nil {
 			log.Printf("episode send error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, epNum)
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -1026,11 +1031,9 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		seasonNum, _ := strconv.Atoi(parts[2])
 		epNum, _ := strconv.Atoi(parts[3])
 		dir, _ := strconv.Atoi(parts[4])
-		voice := ""
+		voiceIdx := -1
 		if len(parts) == 6 && parts[5] != "" {
-			if v, err := url.QueryUnescape(parts[5]); err == nil {
-				voice = v
-			}
+			voiceIdx, _ = strconv.Atoi(parts[5])
 		}
 		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 || (dir != -1 && dir != 1) {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -1055,7 +1058,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		nextEp := epNum + dir
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp, voice); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp, voiceIdx, -1); err != nil {
 			log.Printf("episode nav error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, nextEp)
 		} else if msgID != 0 {
 			_ = bot.DeleteMessage(ctx, chatID, msgID)
@@ -1074,7 +1077,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
 		epNum, _ := strconv.Atoi(parts[3])
-		voice, _ := url.QueryUnescape(parts[4])
+		variantIdx, _ := strconv.Atoi(parts[4])
 		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -1095,7 +1098,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, voice); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, -1, variantIdx); err != nil {
 			log.Printf("episode voice send error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, epNum)
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -1942,7 +1945,7 @@ func findEpisode(season *storage.Season, epNum int) (*storage.Episode, int) {
 	return nil, -1
 }
 
-func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.WatchItem, chatID int64, seasonNum int, epNum int, voice string) error {
+func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.WatchItem, chatID int64, seasonNum int, epNum int, voiceIdx int, variantIdx int) error {
 	season := findSeason(item, seasonNum)
 	if season == nil {
 		return fmt.Errorf("season not found")
@@ -1952,18 +1955,22 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 		return fmt.Errorf("episode not found")
 	}
 
-	voice = strings.TrimSpace(voice)
-	if len(ep.Variants) > 1 && voice == "" {
+	voice := ""
+	if voiceIdx >= 0 {
+		voice = voiceByIndex(item, voiceIdx)
+	}
+
+	if len(ep.Variants) > 1 && voice == "" && variantIdx < 0 {
 		rows := [][]tg.InlineKeyboardButton{}
 		row := []tg.InlineKeyboardButton{}
-		for _, v := range ep.Variants {
+		for i, v := range ep.Variants {
 			vName := strings.TrimSpace(v.Voice)
 			if vName == "" {
 				vName = "Без названия"
 			}
 			btn := tg.InlineKeyboardButton{
 				Text:         vName,
-				CallbackData: fmt.Sprintf("epv:%d:%d:%d:%s", item.KPID, seasonNum, epNum, url.QueryEscape(vName)),
+				CallbackData: fmt.Sprintf("epv:%d:%d:%d:%d", item.KPID, seasonNum, epNum, i),
 			}
 			if len(row) == 2 {
 				rows = append(rows, row)
@@ -1985,12 +1992,18 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 
 	storageChatID := ep.StorageChatID
 	storageMsgID := ep.StorageMessageID
-	if len(ep.Variants) > 0 && voice != "" {
-		for _, v := range ep.Variants {
-			if strings.EqualFold(strings.TrimSpace(v.Voice), voice) {
-				storageChatID = v.StorageChatID
-				storageMsgID = v.StorageMessageID
-				break
+	if len(ep.Variants) > 0 {
+		if variantIdx >= 0 && variantIdx < len(ep.Variants) {
+			v := ep.Variants[variantIdx]
+			storageChatID = v.StorageChatID
+			storageMsgID = v.StorageMessageID
+		} else if voice != "" {
+			for _, v := range ep.Variants {
+				if strings.EqualFold(strings.TrimSpace(v.Voice), voice) {
+					storageChatID = v.StorageChatID
+					storageMsgID = v.StorageMessageID
+					break
+				}
 			}
 		}
 	}
@@ -2006,15 +2019,15 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 	if hasPrev || hasNext {
 		nav := []tg.InlineKeyboardButton{}
 		if hasPrev {
-			if voice != "" {
-				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1:%s", item.KPID, seasonNum, epNum, url.QueryEscape(voice))})
+			if voiceIdx >= 0 {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1:%d", item.KPID, seasonNum, epNum, voiceIdx)})
 			} else {
 				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:-1", item.KPID, seasonNum, epNum)})
 			}
 		}
 		if hasNext {
-			if voice != "" {
-				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1:%s", item.KPID, seasonNum, epNum, url.QueryEscape(voice))})
+			if voiceIdx >= 0 {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1:%d", item.KPID, seasonNum, epNum, voiceIdx)})
 			} else {
 				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("epnav:%d:%d:%d:1", item.KPID, seasonNum, epNum)})
 			}
@@ -2208,12 +2221,12 @@ func collectSeriesVoices(item *storage.WatchItem) []string {
 func buildSeriesVoiceKeyboard(kpID int, voices []string) tg.InlineKeyboardMarkup {
 	rows := [][]tg.InlineKeyboardButton{}
 	row := []tg.InlineKeyboardButton{
-		{Text: "Все", CallbackData: fmt.Sprintf("seriesvoice:%d:all", kpID)},
+		{Text: "Все", CallbackData: fmt.Sprintf("seriesvoice:%d:-1", kpID)},
 	}
-	for _, v := range voices {
+	for i, v := range voices {
 		btn := tg.InlineKeyboardButton{
 			Text:         v,
-			CallbackData: fmt.Sprintf("seriesvoice:%d:%s", kpID, url.QueryEscape(v)),
+			CallbackData: fmt.Sprintf("seriesvoice:%d:%d", kpID, i),
 		}
 		if len(row) == 3 {
 			rows = append(rows, row)
@@ -2226,6 +2239,17 @@ func buildSeriesVoiceKeyboard(kpID int, voices []string) tg.InlineKeyboardMarkup
 	}
 	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
 	return tg.NewInlineKeyboardMarkup(rows)
+}
+
+func voiceByIndex(item *storage.WatchItem, idx int) string {
+	if item == nil || idx < 0 {
+		return ""
+	}
+	voices := collectSeriesVoices(item)
+	if idx >= len(voices) {
+		return ""
+	}
+	return voices[idx]
 }
 
 func formatEpisodeList(nums []int) string {

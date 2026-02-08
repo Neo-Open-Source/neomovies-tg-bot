@@ -2,31 +2,30 @@ package storage
 
 import (
 	"fmt"
-	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"handler/internal/tg"
 )
 
 func (w *WatchItem) SeriesKeyboard() *tg.InlineKeyboardMarkup {
-	return w.SeriesKeyboardWithVoice("")
+	return w.SeriesKeyboardWithVoice("", -1)
 }
 
-func (w *WatchItem) SeriesKeyboardWithVoice(voice string) *tg.InlineKeyboardMarkup {
+func (w *WatchItem) SeriesKeyboardWithVoice(voice string, voiceIdx int) *tg.InlineKeyboardMarkup {
 	if w == nil {
 		return nil
 	}
 	voice = strings.TrimSpace(voice)
-	voiceKey := url.QueryEscape(voice)
 	rows := make([][]tg.InlineKeyboardButton, 0, len(w.Seasons)+1)
 	for _, s := range w.Seasons {
 		if voice != "" && !seasonHasVoice(&s, voice) {
 			continue
 		}
 		cb := fmt.Sprintf("season:%d:%d", w.KPID, s.Number)
-		if voiceKey != "" {
-			cb = fmt.Sprintf("season:%d:%d:%s", w.KPID, s.Number, voiceKey)
+		if voiceIdx >= 0 {
+			cb = fmt.Sprintf("season:%d:%d:%d", w.KPID, s.Number, voiceIdx)
 		}
 		rows = append(rows, []tg.InlineKeyboardButton{{Text: fmt.Sprintf("%d сезон", s.Number), CallbackData: cb}})
 	}
@@ -38,7 +37,7 @@ func (w *WatchItem) SeriesKeyboardWithVoice(voice string) *tg.InlineKeyboardMark
 	return &kb
 }
 
-func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.InlineKeyboardMarkup {
+func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string, voiceIdx int) *tg.InlineKeyboardMarkup {
 	if w == nil {
 		return nil
 	}
@@ -54,7 +53,6 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 	}
 
 	voice = strings.TrimSpace(voice)
-	voiceKey := url.QueryEscape(voice)
 
 	if page < 1 {
 		page = 1
@@ -91,8 +89,10 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 	row := []tg.InlineKeyboardButton{}
 	for i := start; i < end; i++ {
 		ep := filtered[i]
-		cbVoice := voiceKey
-		if cbVoice == "" && len(ep.Variants) > 1 {
+		cbVoice := ""
+		if voiceIdx >= 0 {
+			cbVoice = strconv.Itoa(voiceIdx)
+		} else if len(ep.Variants) > 1 {
 			cbVoice = "select"
 		}
 		row = append(row, tg.InlineKeyboardButton{
@@ -111,15 +111,15 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 	if totalPages > 1 {
 		nav := []tg.InlineKeyboardButton{}
 		if page > 1 {
-			if voiceKey != "" {
-				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%s", w.KPID, seasonNum, page-1, voiceKey)})
+			if voiceIdx >= 0 {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%d", w.KPID, seasonNum, page-1, voiceIdx)})
 			} else {
 				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page-1)})
 			}
 		}
 		if page < totalPages {
-			if voiceKey != "" {
-				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%s", w.KPID, seasonNum, page+1, voiceKey)})
+			if voiceIdx >= 0 {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%d", w.KPID, seasonNum, page+1, voiceIdx)})
 			} else {
 				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page+1)})
 			}
@@ -129,9 +129,9 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 		}
 	}
 
-	if voiceKey != "" {
+	if voiceIdx >= 0 {
 		rows = append(rows, []tg.InlineKeyboardButton{
-			{Text: "Назад", CallbackData: fmt.Sprintf("seriesvoice:%d:%s", w.KPID, voiceKey)},
+			{Text: "Назад", CallbackData: fmt.Sprintf("seriesvoice:%d:%d", w.KPID, voiceIdx)},
 			{Text: "Закрыть", CallbackData: "close"},
 		})
 	} else {
