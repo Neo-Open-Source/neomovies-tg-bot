@@ -2,6 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"net/url"
+	"sort"
+	"strings"
 
 	"handler/internal/tg"
 )
@@ -19,7 +22,7 @@ func (w *WatchItem) SeriesKeyboard() *tg.InlineKeyboardMarkup {
 	return &kb
 }
 
-func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMarkup {
+func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.InlineKeyboardMarkup {
 	if w == nil {
 		return nil
 	}
@@ -34,11 +37,20 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMa
 		return w.SeriesKeyboard()
 	}
 
+	voice = strings.TrimSpace(voice)
+	voiceKey := url.QueryEscape(voice)
+
 	if page < 1 {
 		page = 1
 	}
 	const perPage = 24
-	total := len(season.Episodes)
+	filtered := make([]Episode, 0, len(season.Episodes))
+	for _, ep := range season.Episodes {
+		if voice == "" || strings.EqualFold(strings.TrimSpace(ep.Voice), voice) {
+			filtered = append(filtered, ep)
+		}
+	}
+	total := len(filtered)
 	totalPages := (total + perPage - 1) / perPage
 	if totalPages == 0 {
 		totalPages = 1
@@ -56,9 +68,30 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMa
 	// Header row (tap to go back to season list)
 	rows = append(rows, []tg.InlineKeyboardButton{{Text: fmt.Sprintf("%d сезон", seasonNum), CallbackData: fmt.Sprintf("watch:%d", w.KPID)}})
 
+	voices := uniqueSeasonVoices(season)
+	if len(voices) > 1 {
+		row := []tg.InlineKeyboardButton{
+			{Text: "Все", CallbackData: fmt.Sprintf("seasonvoice:%d:%d:all", w.KPID, seasonNum)},
+		}
+		for _, v := range voices {
+			btn := tg.InlineKeyboardButton{
+				Text:         v,
+				CallbackData: fmt.Sprintf("seasonvoice:%d:%d:%s", w.KPID, seasonNum, url.QueryEscape(v)),
+			}
+			if len(row) == 3 {
+				rows = append(rows, row)
+				row = []tg.InlineKeyboardButton{}
+			}
+			row = append(row, btn)
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+	}
+
 	row := []tg.InlineKeyboardButton{}
 	for i := start; i < end; i++ {
-		ep := season.Episodes[i]
+		ep := filtered[i]
 		row = append(row, tg.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%d серия", ep.Number),
 			CallbackData: fmt.Sprintf("ep:%d:%d:%d", w.KPID, seasonNum, ep.Number),
@@ -75,10 +108,18 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMa
 	if totalPages > 1 {
 		nav := []tg.InlineKeyboardButton{}
 		if page > 1 {
-			nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page-1)})
+			if voice != "" {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%s", w.KPID, seasonNum, page-1, voiceKey)})
+			} else {
+				nav = append(nav, tg.InlineKeyboardButton{Text: "<<<", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page-1)})
+			}
 		}
 		if page < totalPages {
-			nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page+1)})
+			if voice != "" {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d:%s", w.KPID, seasonNum, page+1, voiceKey)})
+			} else {
+				nav = append(nav, tg.InlineKeyboardButton{Text: ">>>", CallbackData: fmt.Sprintf("seasonpage:%d:%d:%d", w.KPID, seasonNum, page+1)})
+			}
 		}
 		if len(nav) > 0 {
 			rows = append(rows, nav)
@@ -88,4 +129,26 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int) *tg.InlineKeyboardMa
 	rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
 	kb := tg.NewInlineKeyboardMarkup(rows)
 	return &kb
+}
+
+func uniqueSeasonVoices(season *Season) []string {
+	if season == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	voices := []string{}
+	for _, ep := range season.Episodes {
+		v := strings.TrimSpace(ep.Voice)
+		if v == "" {
+			continue
+		}
+		key := strings.ToLower(v)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		voices = append(voices, v)
+	}
+	sort.Strings(voices)
+	return voices
 }

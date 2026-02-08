@@ -397,8 +397,10 @@ func handleInlineQuery(ctx context.Context, w http.ResponseWriter, bot *tg.Clien
 	case "#tv", "tv", "series":
 		query = "#tv"
 	}
+	iqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	if query == "" {
-		res, err := movies.GetPopular(ctx, 1)
+		res, err := movies.GetPopular(iqCtx, 1)
 		if err != nil {
 			log.Printf("inline popular error: %v", err)
 			_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: []tg.InlineQueryResult{}, CacheTime: 1, IsPersonal: true})
@@ -413,7 +415,7 @@ func handleInlineQuery(ctx context.Context, w http.ResponseWriter, bot *tg.Clien
 		return
 	}
 
-	res, err := movies.SearchMovies(ctx, query, 1)
+	res, err := movies.SearchMovies(iqCtx, query, 1)
 	if err != nil {
 		log.Printf("inline search error: %v (query=%q)", err, query)
 		_ = bot.AnswerInlineQuery(ctx, tg.AnswerInlineQueryRequest{InlineQueryID: q.ID, Results: []tg.InlineQueryResult{}, CacheTime: 1, IsPersonal: true})
@@ -709,16 +711,19 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		if cq.Message != nil {
-			title := strings.TrimSpace(item.Title)
-			if title == "" {
-				title = fmt.Sprintf("kp_%d", item.KPID)
+			baseVoice := strings.TrimSpace(item.Voice)
+			if baseVoice == "" {
+				season := findSeason(item, seasonNum)
+				if season != nil {
+					baseVoice = mostCommonEpisodeValue(season, func(ep storage.Episode) string { return ep.Voice })
+				}
 			}
 			text := buildSeasonHeader(item, seasonNum)
 			_ = bot.EditMessageText(ctx, tg.EditMessageTextRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
 				Text:        text,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1),
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, baseVoice),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -727,7 +732,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	}
 	if strings.HasPrefix(data, "seasonpage:") {
 		parts := strings.Split(data, ":")
-		if len(parts) != 4 {
+		if len(parts) != 4 && len(parts) != 5 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
@@ -735,6 +740,12 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
 		pageNum, _ := strconv.Atoi(parts[3])
+		voice := ""
+		if len(parts) == 5 && parts[4] != "" {
+			if v, err := url.QueryUnescape(parts[4]); err == nil {
+				voice = v
+			}
+		}
 		if kpID <= 0 || seasonNum <= 0 || pageNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -750,7 +761,46 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
 				ChatID:      cq.Message.Chat.ID,
 				MessageID:   cq.Message.MessageID,
-				ReplyMarkup: item.SeasonKeyboard(seasonNum, pageNum),
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, pageNum, voice),
+			})
+		}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(data, "seasonvoice:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 4 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		voice := strings.TrimSpace(parts[3])
+		if voice == "all" {
+			voice = ""
+		} else {
+			if v, err := url.QueryUnescape(voice); err == nil {
+				voice = v
+			}
+		}
+		if kpID <= 0 || seasonNum <= 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		item, _ := db.GetWatchItemByKPID(ctx, kpID)
+		if item == nil {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if cq.Message != nil {
+			_ = bot.EditMessageReplyMarkup(ctx, tg.EditMessageReplyMarkupRequest{
+				ChatID:      cq.Message.Chat.ID,
+				MessageID:   cq.Message.MessageID,
+				ReplyMarkup: item.SeasonKeyboard(seasonNum, 1, voice),
 			})
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
