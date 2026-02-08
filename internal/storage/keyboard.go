@@ -64,7 +64,9 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string, voiceI
 			filtered = append(filtered, ep)
 			continue
 		}
-		if episodeHasVoice(&ep, voice) {
+		// If episode has multiple variants, filter by voice.
+		// If episode has 0/1 variant, show it regardless of selected voice.
+		if len(ep.Variants) <= 1 || episodeHasVoice(&ep, voice) {
 			filtered = append(filtered, ep)
 		}
 	}
@@ -149,7 +151,7 @@ func seasonHasVoice(season *Season, voice string) bool {
 		return false
 	}
 	for i := range season.Episodes {
-		if episodeHasVoice(&season.Episodes[i], voice) {
+		if len(season.Episodes[i].Variants) <= 1 || episodeHasVoice(&season.Episodes[i], voice) {
 			return true
 		}
 	}

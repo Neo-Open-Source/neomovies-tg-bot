@@ -2187,7 +2187,7 @@ func collectSeriesVoices(item *storage.WatchItem) []string {
 	out := []string{}
 	for _, s := range item.Seasons {
 		for _, ep := range s.Episodes {
-			if len(ep.Variants) > 0 {
+			if len(ep.Variants) > 1 {
 				for _, v := range ep.Variants {
 					name := strings.TrimSpace(v.Voice)
 					if name == "" {
@@ -2200,17 +2200,6 @@ func collectSeriesVoices(item *storage.WatchItem) []string {
 					seen[key] = struct{}{}
 					out = append(out, name)
 				}
-			} else {
-				name := strings.TrimSpace(ep.Voice)
-				if name == "" {
-					continue
-				}
-				key := strings.ToLower(name)
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-				out = append(out, name)
 			}
 		}
 	}
