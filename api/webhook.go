@@ -238,6 +238,7 @@ func libraryHandler(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		li, err := buildLibraryItem(ctx, movies, &items[i])
 		if err != nil {
+			out = append(out, buildLibraryFallback(&items[i], apiBase))
 			continue
 		}
 		out = append(out, li)
@@ -410,6 +411,69 @@ func buildLibraryItem(ctx context.Context, movies *neomovies.Client, wItem *stor
 		EpisodesCount: episodesCount,
 		Voices:        voices,
 	}, nil
+}
+
+func buildLibraryFallback(wItem *storage.WatchItem, apiBase string) libraryItem {
+	title := strings.TrimSpace(wItem.Title)
+	if title == "" {
+		title = fmt.Sprintf("kp_%d", wItem.KPID)
+	}
+	seasonsCount := 0
+	episodesCount := 0
+	if wItem.Type == "series" {
+		seasonsCount = len(wItem.Seasons)
+		for _, s := range wItem.Seasons {
+			episodesCount += len(s.Episodes)
+		}
+	}
+	posterURL := ""
+	if wItem.KPID > 0 {
+		posterURL = fmt.Sprintf("%s/api/v1/images/kp/%d", strings.TrimRight(apiBase, "/"), wItem.KPID)
+	}
+	seasons := []librarySeason{}
+	if wItem.Type == "series" && len(wItem.Seasons) > 0 {
+		seasons = make([]librarySeason, 0, len(wItem.Seasons))
+		for _, s := range wItem.Seasons {
+			ls := librarySeason{Number: s.Number}
+			if len(s.Episodes) > 0 {
+				ls.Episodes = make([]libraryEpisode, 0, len(s.Episodes))
+				for _, ep := range s.Episodes {
+					var variants []libraryEpisodeVariant
+					if len(ep.Variants) > 0 {
+						variants = make([]libraryEpisodeVariant, 0, len(ep.Variants))
+						for _, v := range ep.Variants {
+							variants = append(variants, libraryEpisodeVariant{
+								Voice:   strings.TrimSpace(v.Voice),
+								Quality: strings.TrimSpace(v.Quality),
+							})
+						}
+					}
+					ls.Episodes = append(ls.Episodes, libraryEpisode{
+						Number:   ep.Number,
+						Voice:    strings.TrimSpace(ep.Voice),
+						Quality:  strings.TrimSpace(ep.Quality),
+						Variants: variants,
+					})
+				}
+			}
+			seasons = append(seasons, ls)
+		}
+	}
+	return libraryItem{
+		KPID:          wItem.KPID,
+		Type:          wItem.Type,
+		Title:         title,
+		PosterURL:     posterURL,
+		Rating:        0,
+		Overview:      "",
+		Genres:        nil,
+		Voice:         strings.TrimSpace(wItem.Voice),
+		Quality:       strings.TrimSpace(wItem.Quality),
+		Seasons:       seasons,
+		SeasonsCount:  seasonsCount,
+		EpisodesCount: episodesCount,
+		Voices:        nil,
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

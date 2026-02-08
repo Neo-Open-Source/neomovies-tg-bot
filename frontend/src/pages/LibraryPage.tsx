@@ -27,7 +27,7 @@ export const LibraryPage = () => {
     const loadLibrary = async () => {
       try {
         setLoading(true);
-        const response = await libraryAPI.getLibrary();
+        const response = await libraryAPI.getLibrary(400);
         setItems(response.data);
       } catch (err: any) {
         setError(err.message || 'Failed to load library');

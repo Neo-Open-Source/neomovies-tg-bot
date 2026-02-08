@@ -368,8 +368,11 @@ func (m *Mongo) ListRecent(ctx context.Context, limit int) ([]WatchItem, error) 
 	if m == nil {
 		return nil, errors.New("mongo not configured")
 	}
-	if limit <= 0 || limit > 50 {
-		limit = 20
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
 	}
 	opts := options.Find().SetSort(bson.D{bson.E{Key: "updated_at", Value: -1}}).SetLimit(int64(limit))
 	cur, err := m.col.Find(ctx, bson.M{}, opts)
