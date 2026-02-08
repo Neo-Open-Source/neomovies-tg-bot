@@ -170,6 +170,12 @@ type libraryEpisode struct {
 	Number  int    `json:"number"`
 	Voice   string `json:"voice,omitempty"`
 	Quality string `json:"quality,omitempty"`
+	Variants []libraryEpisodeVariant `json:"variants,omitempty"`
+}
+
+type libraryEpisodeVariant struct {
+	Voice   string `json:"voice,omitempty"`
+	Quality string `json:"quality,omitempty"`
 }
 
 func libraryHandler(w http.ResponseWriter, r *http.Request) {
@@ -353,10 +359,21 @@ func buildLibraryItem(ctx context.Context, movies *neomovies.Client, wItem *stor
 			if len(s.Episodes) > 0 {
 				ls.Episodes = make([]libraryEpisode, 0, len(s.Episodes))
 				for _, ep := range s.Episodes {
+					var variants []libraryEpisodeVariant
+					if len(ep.Variants) > 0 {
+						variants = make([]libraryEpisodeVariant, 0, len(ep.Variants))
+						for _, v := range ep.Variants {
+							variants = append(variants, libraryEpisodeVariant{
+								Voice:   strings.TrimSpace(v.Voice),
+								Quality: strings.TrimSpace(v.Quality),
+							})
+						}
+					}
 					ls.Episodes = append(ls.Episodes, libraryEpisode{
-						Number:  ep.Number,
-						Voice:   strings.TrimSpace(ep.Voice),
-						Quality: strings.TrimSpace(ep.Quality),
+						Number:   ep.Number,
+						Voice:    strings.TrimSpace(ep.Voice),
+						Quality:  strings.TrimSpace(ep.Quality),
+						Variants: variants,
 					})
 				}
 			}
@@ -818,7 +835,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 	}
 	if strings.HasPrefix(data, "ep:") {
 		parts := strings.Split(data, ":")
-		if len(parts) != 4 {
+		if len(parts) != 4 && len(parts) != 5 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
 			return
@@ -826,6 +843,14 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 		kpID, _ := strconv.Atoi(parts[1])
 		seasonNum, _ := strconv.Atoi(parts[2])
 		epNum, _ := strconv.Atoi(parts[3])
+		voice := ""
+		if len(parts) == 5 && parts[4] != "" {
+			if parts[4] == "select" {
+				voice = ""
+			} else if v, err := url.QueryUnescape(parts[4]); err == nil {
+				voice = v
+			}
+		}
 		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 {
 			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 			w.WriteHeader(http.StatusOK)
@@ -846,7 +871,7 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, voice); err != nil {
 			log.Printf("episode send error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, epNum)
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
@@ -887,10 +912,48 @@ func handleCallback(ctx context.Context, w http.ResponseWriter, bot *tg.Client, 
 			return
 		}
 		nextEp := epNum + dir
-		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp); err != nil {
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, nextEp, ""); err != nil {
 			log.Printf("episode nav error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, nextEp)
 		} else if msgID != 0 {
 			_ = bot.DeleteMessage(ctx, chatID, msgID)
+		}
+		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if strings.HasPrefix(data, "epv:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 5 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		kpID, _ := strconv.Atoi(parts[1])
+		seasonNum, _ := strconv.Atoi(parts[2])
+		epNum, _ := strconv.Atoi(parts[3])
+		voice, _ := url.QueryUnescape(parts[4])
+		if kpID <= 0 || seasonNum <= 0 || epNum <= 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		item, _ := db.GetWatchItemByKPID(ctx, kpID)
+		if item == nil {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var chatID int64
+		if cq.Message != nil {
+			chatID = cq.Message.Chat.ID
+		}
+		if chatID == 0 {
+			_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if err := sendEpisodeWithNav(ctx, bot, item, chatID, seasonNum, epNum, voice); err != nil {
+			log.Printf("episode voice send error: %v (kp_id=%d s=%d e=%d)", err, kpID, seasonNum, epNum)
 		}
 		_ = bot.AnswerCallbackQuery(ctx, cq.ID, "")
 		w.WriteHeader(http.StatusOK)
@@ -1736,7 +1799,7 @@ func findEpisode(season *storage.Season, epNum int) (*storage.Episode, int) {
 	return nil, -1
 }
 
-func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.WatchItem, chatID int64, seasonNum int, epNum int) error {
+func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.WatchItem, chatID int64, seasonNum int, epNum int, voice string) error {
 	season := findSeason(item, seasonNum)
 	if season == nil {
 		return fmt.Errorf("season not found")
@@ -1746,7 +1809,50 @@ func sendEpisodeWithNav(ctx context.Context, bot *tg.Client, item *storage.Watch
 		return fmt.Errorf("episode not found")
 	}
 
-	copiedID, err := bot.CopyMessage(ctx, chatID, ep.StorageChatID, ep.StorageMessageID)
+	voice = strings.TrimSpace(voice)
+	if len(ep.Variants) > 1 && voice == "" {
+		rows := [][]tg.InlineKeyboardButton{}
+		row := []tg.InlineKeyboardButton{}
+		for _, v := range ep.Variants {
+			vName := strings.TrimSpace(v.Voice)
+			if vName == "" {
+				vName = "Без названия"
+			}
+			btn := tg.InlineKeyboardButton{
+				Text:         vName,
+				CallbackData: fmt.Sprintf("epv:%d:%d:%d:%s", item.KPID, seasonNum, epNum, url.QueryEscape(vName)),
+			}
+			if len(row) == 2 {
+				rows = append(rows, row)
+				row = []tg.InlineKeyboardButton{}
+			}
+			row = append(row, btn)
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+		rows = append(rows, []tg.InlineKeyboardButton{{Text: "Закрыть", CallbackData: "close"}})
+		kb := tg.NewInlineKeyboardMarkup(rows)
+		return bot.SendMessage(ctx, tg.SendMessageRequest{
+			ChatID:      chatID,
+			Text:        fmt.Sprintf("Выбери озвучку: S%dE%d", seasonNum, epNum),
+			ReplyMarkup: &kb,
+		})
+	}
+
+	storageChatID := ep.StorageChatID
+	storageMsgID := ep.StorageMessageID
+	if len(ep.Variants) > 0 && voice != "" {
+		for _, v := range ep.Variants {
+			if strings.EqualFold(strings.TrimSpace(v.Voice), voice) {
+				storageChatID = v.StorageChatID
+				storageMsgID = v.StorageMessageID
+				break
+			}
+		}
+	}
+
+	copiedID, err := bot.CopyMessage(ctx, chatID, storageChatID, storageMsgID)
 	if err != nil || copiedID <= 0 {
 		return err
 	}

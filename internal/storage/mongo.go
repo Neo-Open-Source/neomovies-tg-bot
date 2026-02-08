@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -36,12 +37,20 @@ type Season struct {
 	Episodes []Episode `bson:"episodes"`
 }
 
-type Episode struct {
-	Number           int   `bson:"number"`
-	StorageChatID    int64 `bson:"storage_chat_id"`
-	StorageMessageID int   `bson:"storage_message_id"`
+type EpisodeVariant struct {
+	StorageChatID    int64  `bson:"storage_chat_id"`
+	StorageMessageID int    `bson:"storage_message_id"`
 	Voice            string `bson:"voice,omitempty"`
 	Quality          string `bson:"quality,omitempty"`
+}
+
+type Episode struct {
+	Number           int              `bson:"number"`
+	StorageChatID    int64            `bson:"storage_chat_id"`
+	StorageMessageID int              `bson:"storage_message_id"`
+	Voice            string           `bson:"voice,omitempty"`
+	Quality          string           `bson:"quality,omitempty"`
+	Variants         []EpisodeVariant `bson:"variants,omitempty"`
 }
 
 func NewMongo(ctx context.Context, uri string) (*Mongo, error) {
@@ -206,11 +215,55 @@ func (m *Mongo) UpsertSeriesEpisode(ctx context.Context, kpID int, seasonNum int
 			break
 		}
 	}
-	newEp := Episode{Number: episodeNum, StorageChatID: storageChatID, StorageMessageID: storageMessageID, Voice: voice, Quality: quality}
+	newVar := EpisodeVariant{
+		StorageChatID:    storageChatID,
+		StorageMessageID: storageMessageID,
+		Voice:            strings.TrimSpace(voice),
+		Quality:          strings.TrimSpace(quality),
+	}
+	newEp := Episode{
+		Number:           episodeNum,
+		StorageChatID:    storageChatID,
+		StorageMessageID: storageMessageID,
+		Voice:            newVar.Voice,
+		Quality:          newVar.Quality,
+		Variants:         []EpisodeVariant{newVar},
+	}
 	if epIdx == -1 {
 		eps = append(eps, newEp)
 	} else {
-		eps[epIdx] = newEp
+		ep := eps[epIdx]
+		if len(ep.Variants) == 0 {
+			if ep.StorageChatID != 0 && ep.StorageMessageID != 0 {
+				ep.Variants = append(ep.Variants, EpisodeVariant{
+					StorageChatID:    ep.StorageChatID,
+					StorageMessageID: ep.StorageMessageID,
+					Voice:            strings.TrimSpace(ep.Voice),
+					Quality:          strings.TrimSpace(ep.Quality),
+				})
+			}
+		}
+		dup := false
+		for _, v := range ep.Variants {
+			if v.StorageChatID == newVar.StorageChatID &&
+				v.StorageMessageID == newVar.StorageMessageID &&
+				strings.EqualFold(strings.TrimSpace(v.Voice), newVar.Voice) &&
+				strings.EqualFold(strings.TrimSpace(v.Quality), newVar.Quality) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			ep.Variants = append(ep.Variants, newVar)
+		}
+		// Keep legacy fields in sync with first variant
+		if len(ep.Variants) > 0 {
+			ep.StorageChatID = ep.Variants[0].StorageChatID
+			ep.StorageMessageID = ep.Variants[0].StorageMessageID
+			ep.Voice = ep.Variants[0].Voice
+			ep.Quality = ep.Variants[0].Quality
+		}
+		eps[epIdx] = ep
 	}
 	sort.Slice(eps, func(i, j int) bool { return eps[i].Number < eps[j].Number })
 	item.Seasons[seasonIdx].Episodes = eps

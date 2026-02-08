@@ -92,9 +92,13 @@ func (w *WatchItem) SeasonKeyboard(seasonNum int, page int, voice string) *tg.In
 	row := []tg.InlineKeyboardButton{}
 	for i := start; i < end; i++ {
 		ep := filtered[i]
+		cbVoice := voiceKey
+		if cbVoice == "" && len(ep.Variants) > 1 {
+			cbVoice = "select"
+		}
 		row = append(row, tg.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%d серия", ep.Number),
-			CallbackData: fmt.Sprintf("ep:%d:%d:%d", w.KPID, seasonNum, ep.Number),
+			CallbackData: fmt.Sprintf("ep:%d:%d:%d:%s", w.KPID, seasonNum, ep.Number, cbVoice),
 		})
 		if len(row) == 3 {
 			rows = append(rows, row)
@@ -138,16 +142,31 @@ func uniqueSeasonVoices(season *Season) []string {
 	seen := map[string]struct{}{}
 	voices := []string{}
 	for _, ep := range season.Episodes {
-		v := strings.TrimSpace(ep.Voice)
-		if v == "" {
-			continue
+		if len(ep.Variants) > 0 {
+			for _, v := range ep.Variants {
+				name := strings.TrimSpace(v.Voice)
+				if name == "" {
+					continue
+				}
+				key := strings.ToLower(name)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				voices = append(voices, name)
+			}
+		} else {
+			v := strings.TrimSpace(ep.Voice)
+			if v == "" {
+				continue
+			}
+			key := strings.ToLower(v)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			voices = append(voices, v)
 		}
-		key := strings.ToLower(v)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		voices = append(voices, v)
 	}
 	sort.Strings(voices)
 	return voices

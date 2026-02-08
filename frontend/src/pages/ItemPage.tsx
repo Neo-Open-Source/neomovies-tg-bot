@@ -62,9 +62,17 @@ export const ItemPage = () => {
   const getMostCommon = (key: 'voice' | 'quality') => {
     const map = new Map<string, number>();
     for (const ep of episodes) {
-      const val = (ep[key] || '').trim();
-      if (!val) continue;
-      map.set(val, (map.get(val) || 0) + 1);
+      if (ep.variants && ep.variants.length > 0) {
+        for (const v of ep.variants) {
+          const val = ((v as any)[key] || '').trim();
+          if (!val) continue;
+          map.set(val, (map.get(val) || 0) + 1);
+        }
+      } else {
+        const val = (ep[key] || '').trim();
+        if (!val) continue;
+        map.set(val, (map.get(val) || 0) + 1);
+      }
     }
     let top = '';
     let max = 0;
@@ -263,12 +271,25 @@ export const ItemPage = () => {
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   {item.seasons.map((season) => {
-                    const voices = Array.from(
-                      new Set((season.episodes || []).map((ep) => (ep.voice || '').trim()).filter(Boolean)),
-                    );
-                    const qualities = Array.from(
-                      new Set((season.episodes || []).map((ep) => (ep.quality || '').trim()).filter(Boolean)),
-                    );
+                    const voiceSet = new Set<string>();
+                    const qualitySet = new Set<string>();
+                    for (const ep of season.episodes || []) {
+                      if (ep.variants && ep.variants.length > 0) {
+                        for (const v of ep.variants) {
+                          const vv = (v.voice || '').trim();
+                          const qq = (v.quality || '').trim();
+                          if (vv) voiceSet.add(vv);
+                          if (qq) qualitySet.add(qq);
+                        }
+                      } else {
+                        const vv = (ep.voice || '').trim();
+                        const qq = (ep.quality || '').trim();
+                        if (vv) voiceSet.add(vv);
+                        if (qq) qualitySet.add(qq);
+                      }
+                    }
+                    const voices = Array.from(voiceSet);
+                    const qualities = Array.from(qualitySet);
                     const voiceLabel = voices.length > 0 ? voices.join(', ') : baseVoice || '—';
                     const qualityLabel = qualities.length > 0 ? qualities.join(', ') : baseQuality || '—';
                     return (

@@ -22,6 +22,7 @@ export interface EpisodeMeta {
   number: number;
   voice?: string;
   quality?: string;
+  variants?: { voice?: string; quality?: string }[];
 }
 
 export interface SeasonMeta {
