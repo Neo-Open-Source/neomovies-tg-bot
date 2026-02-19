@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/Neo-Open-Source/.github/main/profile/rights-banner.svg" alt="Trans Rights are Human Rights banner" width="100%" />
+
 # NeoMovies Telegram Bot + Web Client
 
 Telegram bot for movies/series with inline search, admin panel, and web client built with React + Vite + MUI.
